@@ -1,0 +1,99 @@
+{
+  "name": "Melhoria Descrição — Aplicar no AnyMarket",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aplicar-anymarket",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-32, -112],
+      "id": "22222222-0001-0001-0001-000000000001",
+      "name": "Receber Produto",
+      "webhookId": "aplicar-anymarket-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valida os campos obrigatórios recebidos do frontend\nconst raw = $input.first().json;\nconst body = raw.body ?? raw; // typeVersion 2 não aninha em body\n\nconst productId   = body.productId ?? '';\nconst title       = body.title ?? '';\nconst description = body.description ?? '';\nconst gumgaToken  = body.gumgaToken ?? '';\n\nif (!productId)  throw new Error('productId é obrigatório');\nif (!gumgaToken) throw new Error('gumgaToken é obrigatório');\n\nreturn [{ json: { productId, title, description, gumgaToken } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [160, -112],
+      "id": "22222222-0002-0002-0002-000000000002",
+      "name": "Validar Dados"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.anymarket.com.br/v2/products/{{ $json.productId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "gumgaToken",
+              "value": "={{ $json.gumgaToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/merge-patch+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": {{ JSON.stringify($json.title) }},\n  \"description\": {{ JSON.stringify($json.description) }}\n}",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "redirect": {}
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [352, -112],
+      "id": "22222222-0003-0003-0003-000000000003",
+      "name": "PATCH AnyMarket"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Monta a resposta de sucesso para o frontend\nconst result = $input.first().json;\nreturn [{\n  json: {\n    ok: true,\n    productId: $('Validar Dados').item.json.productId,\n    anymarketStatus: result.statusCode ?? 200\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [544, -112],
+      "id": "22222222-0004-0004-0004-000000000004",
+      "name": "Montar Resposta"
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [736, -112],
+      "id": "22222222-0005-0005-0005-000000000005",
+      "name": "Responder ao Webhook"
+    }
+  ],
+  "connections": {
+    "Receber Produto": {
+      "main": [[{ "node": "Validar Dados", "type": "main", "index": 0 }]]
+    },
+    "Validar Dados": {
+      "main": [[{ "node": "PATCH AnyMarket", "type": "main", "index": 0 }]]
+    },
+    "PATCH AnyMarket": {
+      "main": [[{ "node": "Montar Resposta", "type": "main", "index": 0 }]]
+    },
+    "Montar Resposta": {
+      "main": [[{ "node": "Responder ao Webhook", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

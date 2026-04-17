@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run build:*)",
+      "Bash(node:*)",
+      "Bash(cmd /c \"taskkill /PID 24824 /F\")",
+      "Bash(cmd /c \"taskkill /PID 24824 /F 2>&1\")",
+      "Bash(echo:*)",
+      "Bash(netstat:*)",
+      "Bash(powershell -Command:*)"
+    ]
+  }
+}

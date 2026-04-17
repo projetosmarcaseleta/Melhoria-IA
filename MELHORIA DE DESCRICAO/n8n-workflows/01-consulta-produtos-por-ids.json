@@ -1,0 +1,118 @@
+{
+  "name": "Melhoria Descrição — Consulta Produtos por IDs",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "consultar-produtos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "id": "11111111-0001-0001-0001-000000000001",
+      "name": "Receber IDs",
+      "webhookId": "consultar-produtos-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────\n// Extrai e sanitiza os IDs recebidos no body do POST\n// Aceita: { ids: [\"123\", \"456\"] }\n// typeVersion 2 do Webhook coloca o body diretamente em $json\n// typeVersion 1 coloca em $json.body\n// ─────────────────────────────────────────────────────────────────\nconst raw = $input.first().json;\nconst ids = raw.ids ?? raw.body?.ids ?? [];\n\nif (!Array.isArray(ids) || ids.length === 0) {\n  throw new Error('Payload inválido. Envie: { \"ids\": [\"id1\", \"id2\"] }');\n}\n\n// Sanitiza: remove tudo que não seja alfanumérico, hífen, underscore ou ponto\nconst safe = ids\n  .map(id => String(id).replace(/[^\\w.-]/g, ''))\n  .filter(Boolean);\n\nif (!safe.length) {\n  throw new Error('Nenhum ID válido após sanitização.');\n}\n\n// Formata para cláusula SQL IN: 'id1','id2','id3'\nconst idsForSql = safe.map(id => `'${id}'`).join(',');\n\nreturn [{ json: { idsForSql, totalIds: safe.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "id": "11111111-0002-0002-0002-000000000002",
+      "name": "Preparar IDs para SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    p.id                            AS \"ID\",\n    p.title                         AS \"TITULO\",\n    p.advertisement_description_1   AS \"DESCRICAO\",\n    COALESCE(\n        jsonb_agg(\n            jsonb_build_object(\n                'index', pa.name,\n                'value', pa.value\n            )\n        ) FILTER (WHERE pa.name IS NOT NULL),\n        '[]'::jsonb\n    )                               AS \"CARACTERISTICAS\"\nFROM\n    anymarket_prd.product p\nLEFT JOIN\n    anymarket_prd.product_attribute pa ON pa.id_product = p.id\nWHERE\n    p.id IN ({{ $json.idsForSql }})\nGROUP BY\n    p.id, p.title, p.advertisement_description_1\nORDER BY\n    p.id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [680, 300],
+      "id": "11111111-0003-0003-0003-000000000003",
+      "name": "Buscar Produtos no PostgreSQL",
+      "credentials": {
+        "postgres": {
+          "id": "YnbEc2aEdTjtn8EY",
+          "name": "PRD"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────\n// Formata cada produto e agrega tudo num único item\n// para que o Respond to Webhook retorne um JSON array limpo\n// ─────────────────────────────────────────────────────────────────\nconst produtos = $input.all().map(item => {\n  const raw = item.json;\n\n  // CARACTERISTICAS vem do PostgreSQL como JSONB array: [{index, value}]\n  // Mantemos como array — o frontend já sabe normalizar\n  let carac = raw.CARACTERISTICAS ?? [];\n  if (typeof carac === 'string') {\n    try { carac = JSON.parse(carac); } catch { carac = []; }\n  }\n\n  return {\n    ID:             String(raw.ID ?? ''),\n    TITULO:         raw.TITULO ?? '',\n    DESCRICAO:      raw.DESCRICAO ?? '',\n    CARACTERISTICAS: carac\n  };\n});\n\n// Retorna como um único item com a chave \"products\"\n// O frontend aceita { products: [...] } ou array direto\nreturn [{ json: { products: produtos } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "id": "11111111-0004-0004-0004-000000000004",
+      "name": "Formatar e Agregar Resposta"
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 300],
+      "id": "11111111-0005-0005-0005-000000000005",
+      "name": "Responder ao Webhook"
+    }
+  ],
+  "connections": {
+    "Receber IDs": {
+      "main": [
+        [
+          {
+            "node": "Preparar IDs para SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar IDs para SQL": {
+      "main": [
+        [
+          {
+            "node": "Buscar Produtos no PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Produtos no PostgreSQL": {
+      "main": [
+        [
+          {
+            "node": "Formatar e Agregar Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatar e Agregar Resposta": {
+      "main": [
+        [
+          {
+            "node": "Responder ao Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
