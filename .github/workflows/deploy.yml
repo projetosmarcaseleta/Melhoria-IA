@@ -1,0 +1,50 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install and Build (Frontend)
+        run: |
+          cd "MELHORIA DE DESCRICAO"
+          npm install
+          npm run build
+
+      - name: Deploy Files to VPS via SCP
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Copia tudo para o diretório de destino na VPS
+          source: "."
+          target: "/var/www/melhoria-ia"
+
+      - name: Execute Remote SSH Commands (Restart PM2)
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Entra na pasta do projeto no servidor
+            cd /var/www/melhoria-ia/"MELHORIA DE DESCRICAO"
+            
+            # Instala dependências do backend
+            npm install --production
+            
+            # Reinicia o backend pelo PM2
+            pm2 restart melhoria-ia || pm2 start server/index.js --name melhoria-ia
