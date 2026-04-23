@@ -21,7 +21,7 @@ export default function ConfigModal() {
     if (promptsOpen && !prompts && !promptsLoading) {
       setPromptsLoading(true)
       setPromptsError('')
-      axios.get('/api/prompts')
+      axios.get('/edit/api/prompts')
         .then(({ data }) => setPrompts(data))
         .catch(() => setPromptsError('Não foi possível carregar os prompts. Verifique se o servidor está rodando.'))
         .finally(() => setPromptsLoading(false))
@@ -34,7 +34,7 @@ export default function ConfigModal() {
     if (promptsOpen && prompts) {
       setPromptsSaving(true)
       try {
-        await axios.put('/api/prompts', prompts)
+        await axios.put('/edit/api/prompts', prompts)
       } catch {
         setPromptsError('Erro ao salvar prompts no servidor.')
         setPromptsSaving(false)

@@ -12,6 +12,9 @@
   "dependencies": {
     "@google/genai": "^1.44.0",
     "axios": "^1.7.2",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "openai": "^4.52.7",
     "react": "^18.3.1",
     "react-diff-viewer-continued": "^3.3.1",
@@ -24,9 +27,6 @@
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.7",
     "vite": "^5.3.5"

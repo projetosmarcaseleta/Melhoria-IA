@@ -16,7 +16,7 @@ export async function patchProduct(
   }
 
   await axios.post(
-    '/api/anymarket/patch',
+    '/edit/api/anymarket/patch',
     {
       productId,
       title,

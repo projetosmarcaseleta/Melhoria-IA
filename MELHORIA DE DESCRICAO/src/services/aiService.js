@@ -18,7 +18,7 @@ export async function processProductsWithAI(products, fields = ['title', 'descri
   }))
 
   const response = await axios.post(
-    '/api/process',
+    '/edit/api/process',
     {
       products: payload,
       fields,
