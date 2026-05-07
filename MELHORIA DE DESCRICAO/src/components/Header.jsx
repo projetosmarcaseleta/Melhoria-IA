@@ -8,66 +8,60 @@ export default function Header() {
   const products = useStore((s) => s.products)
   const reviewCount = products.filter((p) => p.status === 'processed').length
 
+  const tabs = [
+    { key: 'products', label: 'Produtos', icon: '📦', count: null },
+    { key: 'review', label: 'Revisão', icon: '👁️', count: reviewCount > 0 ? reviewCount : null, accent: 'var(--accent-amber)' },
+    { key: 'logs', label: 'Logs', icon: '📋', count: logs.length > 0 ? logs.length : null, accent: 'var(--accent-emerald)' },
+  ]
+
   return (
-    <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-30">
+    <header className="sticky top-0 z-30 glass" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
       <div className="max-w-screen-xl mx-auto px-4 flex items-center justify-between h-14">
-        {/* Logo / Título */}
-        <div className="flex items-center gap-2">
-          <span className="text-xl">🛍️</span>
-          <span className="font-semibold text-gray-800 text-sm sm:text-base">
-            Melhoria de Descrição de Produtos
+        {/* Logo */}
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--accent-indigo), #4f46e5)' }}>
+            <span className="text-sm">🛍️</span>
+          </div>
+          <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+            Melhoria de Descrição
           </span>
         </div>
 
-        {/* Abas */}
+        {/* Tabs */}
         <nav className="flex gap-1">
-          <button
-            onClick={() => setTab('products')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'products'
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            Produtos
-          </button>
-          <button
-            onClick={() => setTab('review')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors relative ${
-              activeTab === 'review'
-                ? 'bg-indigo-600 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            Revisão
-            {reviewCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                {reviewCount > 99 ? '99+' : reviewCount}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setTab('logs')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors relative ${
-              activeTab === 'logs'
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            Logs
-            {logs.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-emerald-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                {logs.length > 99 ? '99+' : logs.length}
-              </span>
-            )}
-          </button>
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setTab(tab.key)}
+              className="relative px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all"
+              style={{
+                background: activeTab === tab.key ? 'var(--accent-indigo)' : 'transparent',
+                color: activeTab === tab.key ? 'white' : 'var(--text-secondary)',
+                boxShadow: activeTab === tab.key ? '0 2px 8px rgba(99,102,241,0.3)' : 'none',
+              }}
+              onMouseEnter={(e) => { if (activeTab !== tab.key) e.target.style.background = 'rgba(255,255,255,0.05)' }}
+              onMouseLeave={(e) => { if (activeTab !== tab.key) e.target.style.background = 'transparent' }}
+            >
+              <span className="mr-1">{tab.icon}</span>
+              {tab.label}
+              {tab.count !== null && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold text-white px-1"
+                  style={{ background: tab.accent || 'var(--accent-amber)' }}>
+                  {tab.count > 99 ? '99+' : tab.count}
+                </span>
+              )}
+            </button>
+          ))}
         </nav>
 
-        {/* Config */}
+        {/* Config Button */}
         <button
           onClick={() => setConfigOpen(true)}
           title="Configurações"
-          className="p-2 rounded-md text-gray-500 hover:bg-gray-100 transition-colors"
+          className="w-9 h-9 rounded-lg flex items-center justify-center transition-all"
+          style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
         >
           ⚙️
         </button>

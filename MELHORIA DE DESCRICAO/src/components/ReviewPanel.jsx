@@ -1,29 +1,35 @@
 import { useState } from 'react'
 import useStore from '../store/useStore'
 import ProcessingBar from './ProcessingBar'
+import FloatingActionBar from './FloatingActionBar'
 import { processProductsWithAI } from '../services/aiService'
 import { patchProduct } from '../services/anymarketService'
 import { parallelProcess } from '../utils/batchUtils'
+import { playCompletionSound, showBrowserNotification } from '../utils/notificationUtils'
 import { v4 as uuidv4 } from 'uuid'
 
 const CONCURRENCY = 10
 
-const STATUS_CLS = {
-  processing: 'bg-blue-100 text-blue-700 animate-pulse',
-  processed:  'bg-yellow-100 text-yellow-700',
-  applying:   'bg-purple-100 text-purple-700 animate-pulse',
-  applied:    'bg-emerald-100 text-emerald-700',
-  error:      'bg-red-100 text-red-700',
+const STATUS_STYLES = {
+  processing: { background: 'var(--accent-indigo-glow)', color: 'var(--accent-indigo-light)' },
+  processed:  { background: 'var(--accent-amber-glow)', color: 'var(--accent-amber)' },
+  applying:   { background: 'var(--accent-indigo-glow)', color: 'var(--accent-indigo-light)' },
+  applied:    { background: 'var(--accent-emerald-glow)', color: 'var(--accent-emerald)' },
+  error:      { background: 'var(--accent-rose-glow)', color: 'var(--accent-rose)' },
 }
 const STATUS_LABEL = {
-  processing: 'Processando...',
-  processed:  'Processado',
-  applying:   'Aplicando...',
-  applied:    'Aplicado',
-  error:      'Erro',
+  processing: 'Processando...', processed: 'Processado', applying: 'Aplicando...',
+  applied: 'Aplicado', error: 'Erro',
 }
 
-// Retorna o array de fields ativos para um produto
+// Feature E: Char counter color
+function charColor(len, max) {
+  if (len <= max * 0.7) return 'var(--accent-emerald)'
+  if (len <= max) return 'var(--accent-amber)'
+  return 'var(--accent-rose)'
+}
+function charBarPct(len, max) { return Math.min((len / max) * 100, 100) }
+
 function getActiveFields(sel) {
   const f = []
   if (sel.titulo)   f.push('title')
@@ -47,427 +53,242 @@ export default function ReviewPanel() {
   const setTab               = useStore((s) => s.setTab)
 
   const [selected, setSelected]       = useState([])
-  const [fieldSel, setFieldSel]       = useState({}) // { [id]: { titulo: bool, descricao: bool } }
-  const [previewing, setPreviewing]   = useState({}) // { [id]: true }
+  const [fieldSel, setFieldSel]       = useState({})
+  const [previewing, setPreviewing]   = useState({})
 
   const reviewable = products.filter((p) =>
-    ['processed', 'error', 'applying', 'processing'].includes(p.status) ||
-    (p.newTitle || p.newDescription)
+    ['processed', 'error', 'applying', 'processing'].includes(p.status) || (p.newTitle || p.newDescription)
   )
 
   const isLoading     = ui.isProcessing || ui.isApplying
   const isAllSelected = reviewable.length > 0 && reviewable.every((p) => selected.includes(p.id))
 
-  // ── Helpers de seleção de produto ────────────────────────────────────────
-  const toggleSelect = (id) =>
-    setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+  const toggleSelect = (id) => setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   const selectAll   = () => setSelected(reviewable.map((p) => p.id))
   const deselectAll = () => setSelected([])
 
-  // ── Helpers de seleção de campo ──────────────────────────────────────────
   const getFieldSelFor = (id) => fieldSel[id] ?? { titulo: true, descricao: true }
 
   const toggleFieldSel = (id, field) => {
     setFieldSel((prev) => {
       const cur  = prev[id] ?? { titulo: true, descricao: true }
       const next = { ...cur, [field]: !cur[field] }
-      // Pelo menos um campo deve estar ativo
       if (!next.titulo && !next.descricao) return prev
       return { ...prev, [id]: next }
     })
   }
 
-  const togglePreview = (id) =>
-    setPreviewing((prev) => ({ ...prev, [id]: !prev[id] }))
+  const togglePreview = (id) => setPreviewing((prev) => ({ ...prev, [id]: !prev[id] }))
 
-  // ── Edição inline ────────────────────────────────────────────────────────
   const handleEditTitle = (id, value) => {
     const p = products.find((x) => x.id === id)
     if (p) updateProductNewData(id, value, p.newDescription ?? '')
   }
-
   const handleEditDescription = (id, value) => {
     const p = products.find((x) => x.id === id)
     if (p) updateProductNewData(id, p.newTitle ?? '', value)
   }
 
-  // ── Refazer IA (individual) ──────────────────────────────────────────────
   const handleRedoSingle = async (product) => {
     if (isLoading) return
-
-    // Captura os campos ANTES de qualquer state update que cause re-render
     const fields = getActiveFields(getFieldSelFor(product.id))
-    const existingNewTitle       = product.newTitle       ?? ''
-    const existingNewDescription = product.newDescription ?? ''
     if (!fields.length) return
-
     updateProductStatus(product.id, 'processing')
     setProcessing(true)
     setProgress(0, 1)
     try {
       const results = await processProductsWithAI([product], fields)
       const r = results[0]
-      if (r.error) {
-        updateProductStatus(r.id, 'error')
-        addToast('error', `Erro ao refazer IA para ${r.id}: ${r.error}`)
-      } else {
-        // Usa o valor novo apenas para os campos solicitados; mantém o existente nos demais
-        updateProductResult(
-          r.id,
-          fields.includes('title')       ? (r.newTitle       ?? existingNewTitle)       : existingNewTitle,
-          fields.includes('description') ? (r.newDescription ?? existingNewDescription) : existingNewDescription
-        )
+      if (r.error) { updateProductStatus(r.id, 'error'); addToast('error', `Erro: ${r.error}`) }
+      else {
+        updateProductResult(r.id,
+          fields.includes('title') ? (r.newTitle ?? product.newTitle ?? '') : (product.newTitle ?? ''),
+          fields.includes('description') ? (r.newDescription ?? product.newDescription ?? '') : (product.newDescription ?? ''))
         addToast('success', `IA refeita para produto ${r.id}.`)
       }
-    } catch (e) {
-      updateProductStatus(product.id, 'error')
-      addToast('error', 'Erro ao refazer IA: ' + e.message)
-    } finally {
-      setProcessing(false)
-      setProgress(0, 0)
-    }
+    } catch (e) { updateProductStatus(product.id, 'error'); addToast('error', 'Erro: ' + e.message) }
+    finally { setProcessing(false); setProgress(0, 0) }
   }
 
-  // ── Refazer IA (selecionados) — 10 workers em paralelo ──────────────────
   const handleRedoSelected = async () => {
     const targets = reviewable.filter((p) => selected.includes(p.id))
     if (!targets.length) { addToast('warning', 'Selecione ao menos um produto.'); return }
-
-    // Captura snapshot dos campos selecionados ANTES de qualquer state update
-    const fieldsMap = Object.fromEntries(
-      targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))])
-    )
-
+    const fieldsMap = Object.fromEntries(targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))]))
     targets.forEach((p) => updateProductStatus(p.id, 'processing'))
     setProcessing(true)
     setProgress(0, targets.length)
-
-    await parallelProcess(
-      targets,
-      CONCURRENCY,
-      async (p) => {
-        const fields = fieldsMap[p.id]  // usa snapshot, sem closure de estado React
-        if (!fields?.length) return
-        try {
-          const results = await processProductsWithAI([p], fields)
-          const r = results[0]
-          if (r.error) {
-            updateProductStatus(r.id, 'error')
-          } else {
-            updateProductResult(
-              r.id,
-              fields.includes('title')       ? (r.newTitle       ?? p.newTitle       ?? '') : (p.newTitle       ?? ''),
-              fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? '')
-            )
-          }
-        } catch (e) {
-          updateProductStatus(p.id, 'error')
-          addToast('error', `Erro produto ${p.id}: ` + e.message)
-        }
-      },
-      (done, total) => setProgress(done, total)
-    )
-
+    await parallelProcess(targets, CONCURRENCY, async (p) => {
+      const fields = fieldsMap[p.id]
+      if (!fields?.length) return
+      try {
+        const results = await processProductsWithAI([p], fields)
+        const r = results[0]
+        if (r.error) updateProductStatus(r.id, 'error')
+        else updateProductResult(r.id,
+          fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
+          fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''))
+      } catch (e) { updateProductStatus(p.id, 'error') }
+    }, (done, total) => setProgress(done, total))
     setProcessing(false)
     addToast('success', `IA refeita para ${targets.length} produto(s).`)
+    if (config.soundNotification) { playCompletionSound(); showBrowserNotification('IA Concluída', `${targets.length} produtos reprocessados.`) }
   }
 
-  // ── Aplicar selecionados — 10 workers em paralelo ───────────────────────
   const handleApplySelected = async () => {
-    const targets = reviewable.filter(
-      (p) => selected.includes(p.id) && p.status === 'processed'
-    )
-    if (!targets.length) {
-      addToast('info', 'Nenhum produto com status "Processado" selecionado.')
-      return
-    }
+    const targets = reviewable.filter((p) => selected.includes(p.id) && p.status === 'processed')
+    if (!targets.length) { addToast('info', 'Nenhum produto "Processado" selecionado.'); return }
     if (!config.gumgaToken) { setConfigOpen(true); return }
-
-    // Captura snapshot dos campos e config ANTES de qualquer state update
-    const fieldsMap  = Object.fromEntries(
-      targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))])
-    )
-    const webhookUrl  = config.anymarketMode === 'webhook' ? config.anymarketWebhookUrl : ''
-    const gumgaToken  = config.gumgaToken
-
+    const fieldsMap = Object.fromEntries(targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))]))
     targets.forEach((p) => updateProductStatus(p.id, 'applying'))
     setApplying(true)
     setProgress(0, targets.length)
-
-    await parallelProcess(
-      targets,
-      CONCURRENCY,
-      async (p) => {
-        const fields = fieldsMap[p.id]  // usa snapshot, sem closure de estado React
-        try {
-          // Sempre envia ambos os campos para a AnyMarket.
-          // Para o campo NÃO selecionado, usa o valor original (p.title / p.description)
-          // para evitar que a AnyMarket apague ou sobrescreva o que não foi alterado.
-          await patchProduct(
-            p.id,
-            fields.includes('title')       ? p.newTitle       : p.title,
-            fields.includes('description') ? p.newDescription : p.description,
-            gumgaToken, webhookUrl,
-          )
-          updateProductStatus(p.id, 'applied')
-
-          // Log apenas os campos que foram alterados
-          const changes = []
-          if (fieldsMap[p.id].includes('title'))       changes.push({ field: 'TITULO',    before: p.title,       after: p.newTitle })
-          if (fieldsMap[p.id].includes('description')) changes.push({ field: 'DESCRIÇÃO', before: p.description, after: p.newDescription })
-
-          addLog({
-            logId: uuidv4(),
-            productId: p.id,
-            productTitle: p.newTitle ?? p.title,
-            timestamp: new Date().toISOString(),
-            status: 'applied',
-            changes,
-            originalData: { title: p.title, description: p.description },
-          })
-        } catch (e) {
-          updateProductStatus(p.id, 'error')
-          addToast('error', `Erro ao aplicar produto ${p.id}: ` + e.message)
-        }
-      },
-      (done, total) => setProgress(done, total)
-    )
-
+    await parallelProcess(targets, CONCURRENCY, async (p) => {
+      const fields = fieldsMap[p.id]
+      try {
+        await patchProduct(p.id, fields.includes('title') ? p.newTitle : p.title, fields.includes('description') ? p.newDescription : p.description, config.gumgaToken)
+        updateProductStatus(p.id, 'applied')
+        const changes = []
+        if (fields.includes('title'))       changes.push({ field: 'TITULO',    before: p.title,       after: p.newTitle })
+        if (fields.includes('description')) changes.push({ field: 'DESCRIÇÃO', before: p.description, after: p.newDescription })
+        addLog({ logId: uuidv4(), productId: p.id, productTitle: p.newTitle ?? p.title, timestamp: new Date().toISOString(), status: 'applied', changes, originalData: { title: p.title, description: p.description } })
+      } catch (e) { updateProductStatus(p.id, 'error'); addToast('error', `Erro ${p.id}: ` + e.message) }
+    }, (done, total) => setProgress(done, total))
     setApplying(false)
     addToast('success', `${targets.length} produto(s) enviados para a AnyMarket.`)
-    setSelected((prev) =>
-      prev.filter((id) => {
-        const p = products.find((x) => x.id === id)
-        return p && p.status !== 'applied'
-      })
-    )
-
+    if (config.soundNotification) { playCompletionSound(); showBrowserNotification('Aplicação concluída', `${targets.length} produtos aplicados na AnyMarket.`) }
+    setSelected((prev) => prev.filter((id) => { const p = products.find((x) => x.id === id); return p && p.status !== 'applied' }))
     const stillPending = products.filter((p) => ['processed', 'error'].includes(p.status))
     if (!stillPending.length) setTab('logs')
   }
 
-  // ── Vazio ────────────────────────────────────────────────────────────────
   if (reviewable.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+      <div className="flex flex-col items-center justify-center py-20" style={{ color: 'var(--text-muted)' }}>
         <span className="text-5xl mb-4">🔍</span>
         <p className="text-lg font-medium">Nenhum produto processado para revisar.</p>
-        <p className="text-sm mt-1">
-          Volte para{' '}
-          <button onClick={() => setTab('products')} className="text-indigo-600 hover:underline">
-            Produtos
-          </button>{' '}
-          e execute o processamento com IA.
-        </p>
+        <p className="text-sm mt-1">Volte para{' '}
+          <button onClick={() => setTab('products')} style={{ color: 'var(--accent-indigo-light)' }} className="hover:underline">Produtos</button>
+          {' '}e execute o processamento com IA.</p>
       </div>
     )
   }
 
+  const TITLE_MAX = 60
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-gray-700">
-          Revisão —{' '}
-          <span className="font-normal text-gray-500">{reviewable.length} produto(s)</span>
+      <div className="card px-4 py-3 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Revisão — <span className="font-normal" style={{ color: 'var(--text-muted)' }}>{reviewable.length} produto(s)</span>
         </span>
-
         <div className="flex gap-2 flex-wrap">
-          <button
-            onClick={isAllSelected ? deselectAll : selectAll}
-            className="text-xs px-3 py-1.5 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
-          >
+          <button onClick={isAllSelected ? deselectAll : selectAll} className="btn-secondary text-xs py-1.5 px-3">
             {isAllSelected ? 'Desselecionar todos' : 'Selecionar todos'}
           </button>
-          {selected.length > 0 && !isAllSelected && (
-            <button
-              onClick={deselectAll}
-              className="text-xs px-3 py-1.5 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
-            >
-              Limpar seleção
-            </button>
-          )}
         </div>
-
         <div className="ml-auto flex gap-2 flex-wrap">
-          <button
-            onClick={handleRedoSelected}
-            disabled={isLoading || !selected.length}
-            className="flex items-center gap-1.5 bg-blue-600 text-white text-xs px-3 py-1.5 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            🔄 Refazer IA
-            {selected.length > 0 && (
-              <span className="bg-blue-500 rounded-full px-1.5 py-0.5 text-[10px] leading-none">
-                {selected.length}
-              </span>
-            )}
+          <button onClick={handleRedoSelected} disabled={isLoading || !selected.length} className="btn-primary text-xs py-1.5">
+            🔄 Refazer IA {selected.length > 0 && <span className="px-1.5 py-0.5 rounded-full text-[10px]" style={{ background: 'rgba(255,255,255,0.2)' }}>{selected.length}</span>}
           </button>
-          <button
-            onClick={handleApplySelected}
-            disabled={isLoading || !selected.length}
-            className="flex items-center gap-1.5 bg-emerald-600 text-white text-xs px-3 py-1.5 rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            🚀 Aplicar na AnyMarket
-            {selected.length > 0 && (
-              <span className="bg-emerald-500 rounded-full px-1.5 py-0.5 text-[10px] leading-none">
-                {selected.length}
-              </span>
-            )}
+          <button onClick={handleApplySelected} disabled={isLoading || !selected.length}
+            className="btn-primary text-xs py-1.5" style={{ background: 'linear-gradient(135deg, #059669, #047857)' }}>
+            🚀 Aplicar {selected.length > 0 && <span className="px-1.5 py-0.5 rounded-full text-[10px]" style={{ background: 'rgba(255,255,255,0.2)' }}>{selected.length}</span>}
           </button>
         </div>
       </div>
 
-      {/* Progress bar */}
       {isLoading && (ui.progress?.total ?? 0) > 0 && (
-        <ProcessingBar
-          current={ui.progress?.current ?? 0}
-          total={ui.progress?.total ?? 0}
-          label={ui.isProcessing ? 'Refazendo com IA...' : 'Aplicando na AnyMarket...'}
-        />
+        <div className="card p-4">
+          <ProcessingBar current={ui.progress?.current ?? 0} total={ui.progress?.total ?? 0}
+            label={ui.isProcessing ? 'Refazendo com IA...' : 'Aplicando na AnyMarket...'} />
+        </div>
       )}
 
       {/* Cards */}
       <div className="space-y-3">
         {reviewable.map((p) => {
           const isSelected = selected.includes(p.id)
-          const sl         = STATUS_LABEL[p.status]
-          const sc         = STATUS_CLS[p.status]
+          const sl = STATUS_LABEL[p.status]
+          const ss = STATUS_STYLES[p.status]
           const isPreview  = previewing[p.id]
           const fsel       = getFieldSelFor(p.id)
           const titleLen   = (p.newTitle ?? '').length
+          const titleColor = charColor(titleLen, TITLE_MAX)
 
           return (
-            <div
-              key={p.id}
-              className={`bg-white rounded-xl border transition-all ${
-                isSelected ? 'border-indigo-400 shadow-sm' : 'border-gray-200'
-              }`}
-            >
+            <div key={p.id} className="card transition-all" style={{ borderColor: isSelected ? 'rgba(99,102,241,0.3)' : undefined, boxShadow: isSelected ? 'var(--shadow-glow-indigo)' : undefined }}>
               {/* Card header */}
-              <div className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-100">
-                {/* Seletor de produto */}
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={() => toggleSelect(p.id)}
-                  className="rounded accent-indigo-600 w-4 h-4 shrink-0"
-                />
-                <span className="font-mono text-xs text-gray-500 shrink-0">{p.id}</span>
-                {sl && (
-                  <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${sc}`}>
-                    {sl}
-                  </span>
-                )}
-
-                {/* Seletores de campo */}
+              <div className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(p.id)} className="checkbox-custom" />
+                <span className="font-mono text-xs" style={{ color: 'var(--text-muted)' }}>{p.id}</span>
+                {sl && <span className="badge" style={ss}>{sl}</span>}
                 <div className="flex items-center gap-2 ml-2">
-                  <label className={`flex items-center gap-1 text-xs cursor-pointer select-none px-2 py-0.5 rounded-full border transition-colors ${
-                    fsel.titulo
-                      ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
-                      : 'bg-gray-50 border-gray-200 text-gray-400'
-                  }`}>
-                    <input
-                      type="checkbox"
-                      checked={fsel.titulo}
-                      onChange={() => toggleFieldSel(p.id, 'titulo')}
-                      className="w-3 h-3 accent-indigo-600"
-                    />
-                    Título
-                  </label>
-                  <label className={`flex items-center gap-1 text-xs cursor-pointer select-none px-2 py-0.5 rounded-full border transition-colors ${
-                    fsel.descricao
-                      ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
-                      : 'bg-gray-50 border-gray-200 text-gray-400'
-                  }`}>
-                    <input
-                      type="checkbox"
-                      checked={fsel.descricao}
-                      onChange={() => toggleFieldSel(p.id, 'descricao')}
-                      className="w-3 h-3 accent-emerald-600"
-                    />
-                    Descrição
-                  </label>
+                  {['titulo', 'descricao'].map((field) => {
+                    const active = fsel[field]
+                    const isTitle = field === 'titulo'
+                    return (
+                      <label key={field} className="flex items-center gap-1 text-xs cursor-pointer select-none px-2 py-0.5 rounded-full transition-all"
+                        style={{
+                          background: active ? (isTitle ? 'var(--accent-indigo-glow)' : 'var(--accent-emerald-glow)') : 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${active ? (isTitle ? 'rgba(99,102,241,0.3)' : 'rgba(52,211,153,0.3)') : 'var(--border-default)'}`,
+                          color: active ? (isTitle ? 'var(--accent-indigo-light)' : 'var(--accent-emerald)') : 'var(--text-muted)',
+                        }}>
+                        <input type="checkbox" checked={active} onChange={() => toggleFieldSel(p.id, field)} style={{ display: 'none' }} />
+                        {isTitle ? '🏷️ Título' : '📄 Descrição'}
+                      </label>
+                    )
+                  })}
                 </div>
-
                 <div className="ml-auto">
-                  <button
-                    onClick={() => handleRedoSingle(p)}
-                    disabled={isLoading}
-                    className="flex items-center gap-1 text-xs text-blue-600 border border-blue-200 px-2.5 py-1 rounded-md hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
+                  <button onClick={() => handleRedoSingle(p)} disabled={isLoading}
+                    className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg transition-all disabled:opacity-40"
+                    style={{ background: 'var(--accent-indigo-glow)', color: 'var(--accent-indigo-light)', border: '1px solid rgba(99,102,241,0.2)' }}>
                     🔄 Refazer IA
                   </button>
                 </div>
               </div>
 
-              {/* Título — só exibe se o campo estiver ativo */}
+              {/* Título */}
               {fsel.titulo && (
-                <div className="grid grid-cols-2 divide-x divide-gray-100 border-b border-gray-100">
-                  <div className="px-4 py-3">
-                    <p className="text-[10px] uppercase font-semibold text-gray-400 mb-1.5 tracking-wide">
-                      Título — Antes
-                    </p>
-                    <p className="text-sm text-gray-700 leading-snug">
-                      {p.title || <span className="text-gray-400 italic">—</span>}
-                    </p>
+                <div className="grid grid-cols-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  <div className="px-4 py-3" style={{ borderRight: '1px solid var(--border-subtle)' }}>
+                    <p className="text-[10px] uppercase font-semibold mb-1.5 tracking-wider" style={{ color: 'var(--text-muted)' }}>Título — Antes</p>
+                    <p className="text-sm leading-snug" style={{ color: 'var(--text-secondary)' }}>{p.title || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>—</span>}</p>
                   </div>
-                  <div className="px-4 py-3 bg-indigo-50/40">
+                  <div className="px-4 py-3" style={{ background: 'rgba(99,102,241,0.03)' }}>
                     <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-[10px] uppercase font-semibold text-indigo-600 tracking-wide">
-                        Título — Depois
-                      </p>
-                      <span className={`text-[10px] font-medium ${titleLen > 60 ? 'text-amber-600' : 'text-gray-400'}`}>
-                        {titleLen}/60{titleLen > 60 && ' ⚠'}
-                      </span>
+                      <p className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: 'var(--accent-indigo-light)' }}>Título — Depois</p>
+                      <span className="text-[10px] font-bold" style={{ color: titleColor }}>{titleLen}/{TITLE_MAX}{titleLen > TITLE_MAX && ' ⚠'}</span>
                     </div>
-                    <input
-                      type="text"
-                      value={p.newTitle ?? ''}
-                      onChange={(e) => handleEditTitle(p.id, e.target.value)}
-                      disabled={isLoading}
-                      className="w-full text-sm text-indigo-900 font-medium bg-white border border-indigo-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-60 disabled:cursor-not-allowed"
-                    />
+                    <input type="text" value={p.newTitle ?? ''} onChange={(e) => handleEditTitle(p.id, e.target.value)} disabled={isLoading} className="input-dark text-sm font-medium py-1.5" />
+                    {/* Feature E: Visual char bar */}
+                    <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                      <div className="h-1 rounded-full transition-all duration-200" style={{ width: `${charBarPct(titleLen, TITLE_MAX)}%`, background: titleColor }} />
+                    </div>
                   </div>
                 </div>
               )}
 
-              {/* Descrição — só exibe se o campo estiver ativo */}
+              {/* Descrição */}
               {fsel.descricao && (
-                <div className="grid grid-cols-2 divide-x divide-gray-100">
-                  <div className="px-4 py-3">
-                    <p className="text-[10px] uppercase font-semibold text-gray-400 mb-1.5 tracking-wide">
-                      Descrição — Antes
-                    </p>
-                    <div
-                      className="text-xs text-gray-600 prose prose-sm max-w-none max-h-40 overflow-y-auto"
-                      dangerouslySetInnerHTML={{ __html: p.description || '<em>—</em>' }}
-                    />
+                <div className="grid grid-cols-2">
+                  <div className="px-4 py-3" style={{ borderRight: '1px solid var(--border-subtle)' }}>
+                    <p className="text-[10px] uppercase font-semibold mb-1.5 tracking-wider" style={{ color: 'var(--text-muted)' }}>Descrição — Antes</p>
+                    <div className="text-xs max-h-40 overflow-y-auto" style={{ color: 'var(--text-secondary)' }} dangerouslySetInnerHTML={{ __html: p.description || '<em>—</em>' }} />
                   </div>
-                  <div className="px-4 py-3 bg-emerald-50/40">
+                  <div className="px-4 py-3" style={{ background: 'rgba(52,211,153,0.03)' }}>
                     <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-[10px] uppercase font-semibold text-emerald-600 tracking-wide">
-                        Descrição — Depois
-                      </p>
-                      <button
-                        onClick={() => togglePreview(p.id)}
-                        className="text-[10px] text-emerald-600 hover:text-emerald-800 underline"
-                      >
+                      <p className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: 'var(--accent-emerald)' }}>Descrição — Depois</p>
+                      <button onClick={() => togglePreview(p.id)} className="text-[10px] underline" style={{ color: 'var(--accent-emerald)' }}>
                         {isPreview ? 'Editar HTML' : 'Preview'}
                       </button>
                     </div>
                     {isPreview ? (
-                      <div
-                        className="text-xs text-emerald-900 prose prose-sm max-w-none max-h-40 overflow-y-auto bg-white border border-emerald-200 rounded-md px-2 py-1"
-                        dangerouslySetInnerHTML={{ __html: p.newDescription || '<em>—</em>' }}
-                      />
+                      <div className="text-xs max-h-40 overflow-y-auto rounded-lg p-2" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }} dangerouslySetInnerHTML={{ __html: p.newDescription || '<em>—</em>' }} />
                     ) : (
-                      <textarea
-                        value={p.newDescription ?? ''}
-                        onChange={(e) => handleEditDescription(p.id, e.target.value)}
-                        disabled={isLoading}
-                        rows={5}
-                        className="w-full text-xs text-emerald-900 font-mono bg-white border border-emerald-200 rounded-md px-2 py-1 resize-y focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed"
-                      />
+                      <textarea value={p.newDescription ?? ''} onChange={(e) => handleEditDescription(p.id, e.target.value)} disabled={isLoading} rows={4}
+                        className="input-dark text-xs font-mono resize-y" />
                     )}
                   </div>
                 </div>
@@ -476,6 +297,9 @@ export default function ReviewPanel() {
           )
         })}
       </div>
+
+      {/* Feature G: Floating bar */}
+      <FloatingActionBar onProcess={handleRedoSelected} onApply={handleApplySelected} disabled={isLoading} />
     </div>
   )
 }

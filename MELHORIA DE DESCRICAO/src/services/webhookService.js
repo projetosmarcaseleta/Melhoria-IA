@@ -1,18 +1,14 @@
 import axios from 'axios'
 
 /**
- * Envia os IDs ao webhook n8n (que executa a query PostgreSQL)
- * e retorna os dados completos dos produtos.
+ * Consulta os produtos via backend proxy → n8n webhook PostgreSQL.
+ * A URL do webhook é definida no .env do servidor (N8N_CONSULTA_WEBHOOK_URL).
  *
  * O webhook deve retornar: [{ID, TITULO, DESCRIÇÃO, CARACTERISTICAS}, ...]
  */
-export async function fetchProductsFromWebhook(webhookUrl, ids) {
-  if (!webhookUrl) {
-    throw new Error('URL do webhook n8n não configurada. Acesse as configurações.')
-  }
-
+export async function fetchProductsFromWebhook(ids) {
   const response = await axios.post(
-    webhookUrl,
+    '/edit/api/anymarket/fetch-products',
     { ids },
     {
       headers: { 'Content-Type': 'application/json' },

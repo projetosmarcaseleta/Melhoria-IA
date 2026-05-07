@@ -31,11 +31,15 @@ export default function FileUpload({ onIdsLoaded, disabled }) {
       onDragLeave={() => setIsDragging(false)}
       onDrop={onDrop}
       onClick={() => !disabled && inputRef.current?.click()}
-      className={`
-        border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors
-        ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-blue-400 hover:bg-blue-50'}
-        ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50'}
-      `}
+      className="rounded-xl p-6 text-center cursor-pointer transition-all"
+      style={{
+        border: `2px dashed ${isDragging ? 'var(--accent-indigo)' : 'var(--border-default)'}`,
+        background: isDragging ? 'var(--accent-indigo-glow)' : 'var(--bg-input)',
+        opacity: disabled ? 0.5 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+      onMouseEnter={(e) => { if (!disabled && !isDragging) { e.currentTarget.style.borderColor = 'var(--accent-indigo-light)'; e.currentTarget.style.background = 'rgba(99,102,241,0.05)' } }}
+      onMouseLeave={(e) => { if (!isDragging) { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.background = 'var(--bg-input)' } }}
     >
       <input
         ref={inputRef}
@@ -46,11 +50,11 @@ export default function FileUpload({ onIdsLoaded, disabled }) {
         disabled={disabled}
       />
       <div className="text-3xl mb-2">📂</div>
-      <p className="text-sm font-medium text-gray-700">
+      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
         Arraste ou clique para selecionar a planilha
       </p>
-      <p className="text-xs text-gray-500 mt-1">
-        Excel (.xlsx / .xls) ou CSV contendo a coluna <strong>ID</strong>
+      <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+        Excel (.xlsx / .xls) ou CSV contendo a coluna <strong style={{ color: 'var(--text-secondary)' }}>ID</strong>
       </p>
     </div>
   )

@@ -1,5 +1,6 @@
 import useStore from './store/useStore'
 import Header from './components/Header'
+import TokenBar from './components/TokenBar'
 import ConfigModal from './components/ConfigModal'
 import ProductTable from './components/ProductTable'
 import ReviewPanel from './components/ReviewPanel'
@@ -11,10 +12,13 @@ export default function App() {
   const configOpen = useStore((s) => s.ui.configOpen)
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
       <Header />
 
-      <main className="max-w-screen-xl mx-auto px-4 py-6">
+      <main className="max-w-screen-xl mx-auto px-4 py-6 space-y-4">
+        {/* Token AnyMarket — sempre visível na página principal */}
+        {activeTab === 'products' && <TokenBar />}
+
         {activeTab === 'products' && <ProductTable />}
         {activeTab === 'review' && <ReviewPanel />}
         {activeTab === 'logs' && <LogPanel />}

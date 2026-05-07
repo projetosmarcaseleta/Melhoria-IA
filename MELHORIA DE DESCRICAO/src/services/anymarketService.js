@@ -1,29 +1,17 @@
 import axios from 'axios'
 
 /**
- * Envia PATCH ao AnyMarket via backend Express.
- * `fields`: array com os campos a atualizar — ['title'], ['description'] ou ['title','description'] (padrão).
+ * Envia PATCH ao AnyMarket via backend Express → n8n webhook.
+ * A URL do webhook é definida no .env do servidor.
  */
-export async function patchProduct(
-  productId,
-  title,
-  description,
-  gumgaToken,
-  anymarketWebhookUrl = '',
-) {
+export async function patchProduct(productId, title, description, gumgaToken) {
   if (!gumgaToken) {
     throw new Error('Token AnyMarket (gumgaToken) não configurado.')
   }
 
   await axios.post(
     '/edit/api/anymarket/patch',
-    {
-      productId,
-      title,
-      description,
-      gumgaToken,
-      webhookUrl: anymarketWebhookUrl || undefined,
-    },
+    { productId, title, description, gumgaToken },
     { timeout: 60_000 }
   )
 }

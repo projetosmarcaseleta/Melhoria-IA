@@ -8,13 +8,15 @@ const useStore = create(
     (set, get) => ({
       // ─── Configurações (persistidas no localStorage) ─────────────────────
       config: {
-        n8nWebhookUrl: '',
         gumgaToken: '',
-        openaiKeyHint: '',        // apenas exibição; a chave real fica no .env do backend
-        anymarketMode: 'backend', // 'backend' | 'webhook'
-        anymarketWebhookUrl: '',  // URL do webhook n8n que faz o PATCH na AnyMarket
         aiProvider: 'openai',     // 'openai' | 'gemini'
         geminiApiKey: '',         // chave da API do Google Gemini
+        promptMode: 'default',    // 'default' | 'custom'
+        applyTitles: true,        // processar títulos
+        applyDescriptions: true,  // processar descrições
+        soundNotification: true,  // tocar som ao terminar lote
+        // Prompts personalizados ficam em cache local — só para quem alterou
+        customPrompts: null,      // { descricao: string, titulo: string } | null
       },
 
       setConfig: (updates) =>
@@ -70,11 +72,11 @@ const useStore = create(
 
       // ─── UI ───────────────────────────────────────────────────────────────
       ui: {
-        activeTab: 'products',      // 'products' | 'logs'
+        activeTab: 'products',      // 'products' | 'review' | 'logs'
         isProcessing: false,
         isFetchingWebhook: false,
         isApplying: false,
-        progress: { current: 0, total: 0 },
+        progress: { current: 0, total: 0, startTime: null },
         toasts: [],                 // [{id, type, message}]
         configOpen: false,
         selectedIds: [],            // IDs selecionados na tabela
@@ -93,7 +95,16 @@ const useStore = create(
         set((s) => ({ ui: { ...s.ui, isApplying: v } })),
 
       setProgress: (current, total) =>
-        set((s) => ({ ui: { ...s.ui, progress: { current, total } } })),
+        set((s) => ({
+          ui: {
+            ...s.ui,
+            progress: {
+              current,
+              total,
+              startTime: current === 0 ? Date.now() : (s.ui.progress.startTime ?? Date.now()),
+            },
+          },
+        })),
 
       setConfigOpen: (v) =>
         set((s) => ({ ui: { ...s.ui, configOpen: v } })),
