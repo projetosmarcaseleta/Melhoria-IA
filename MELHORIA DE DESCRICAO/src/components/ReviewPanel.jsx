@@ -78,6 +78,38 @@ export default function ReviewPanel() {
     })
   }
 
+  // Bulk toggles — liga/desliga todos títulos ou descrições de uma vez
+  const allTitulosOn = reviewable.every((p) => getFieldSelFor(p.id).titulo)
+  const allDescOn    = reviewable.every((p) => getFieldSelFor(p.id).descricao)
+
+  const toggleAllTitulos = () => {
+    const newVal = !allTitulosOn
+    setFieldSel((prev) => {
+      const next = { ...prev }
+      for (const p of reviewable) {
+        const cur = next[p.id] ?? { titulo: true, descricao: true }
+        // Não deixa ambos false
+        if (!newVal && !cur.descricao) continue
+        next[p.id] = { ...cur, titulo: newVal }
+      }
+      return next
+    })
+  }
+
+  const toggleAllDescricoes = () => {
+    const newVal = !allDescOn
+    setFieldSel((prev) => {
+      const next = { ...prev }
+      for (const p of reviewable) {
+        const cur = next[p.id] ?? { titulo: true, descricao: true }
+        // Não deixa ambos false
+        if (!newVal && !cur.titulo) continue
+        next[p.id] = { ...cur, descricao: newVal }
+      }
+      return next
+    })
+  }
+
   const togglePreview = (id) => setPreviewing((prev) => ({ ...prev, [id]: !prev[id] }))
 
   const handleEditTitle = (id, value) => {
@@ -185,6 +217,30 @@ export default function ReviewPanel() {
         <div className="flex gap-2 flex-wrap">
           <button onClick={isAllSelected ? deselectAll : selectAll} className="btn-secondary text-xs py-1.5 px-3">
             {isAllSelected ? 'Desselecionar todos' : 'Selecionar todos'}
+          </button>
+          <button onClick={toggleAllTitulos}
+            className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg transition-all"
+            style={{
+              background: allTitulosOn ? 'var(--accent-indigo-glow)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${allTitulosOn ? 'rgba(99,102,241,0.35)' : 'var(--border-default)'}`,
+              color: allTitulosOn ? 'var(--accent-indigo-light)' : 'var(--text-muted)',
+            }}>
+            🏷️ Todos Títulos
+            <div className="w-7 h-[16px] rounded-full relative ml-1" style={{ background: allTitulosOn ? 'var(--accent-indigo)' : 'rgba(255,255,255,0.1)' }}>
+              <div className="w-[12px] h-[12px] rounded-full bg-white absolute top-[2px] transition-all" style={{ left: allTitulosOn ? '13px' : '2px' }} />
+            </div>
+          </button>
+          <button onClick={toggleAllDescricoes}
+            className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg transition-all"
+            style={{
+              background: allDescOn ? 'var(--accent-emerald-glow)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${allDescOn ? 'rgba(52,211,153,0.35)' : 'var(--border-default)'}`,
+              color: allDescOn ? 'var(--accent-emerald)' : 'var(--text-muted)',
+            }}>
+            📄 Todas Descrições
+            <div className="w-7 h-[16px] rounded-full relative ml-1" style={{ background: allDescOn ? 'var(--accent-emerald)' : 'rgba(255,255,255,0.1)' }}>
+              <div className="w-[12px] h-[12px] rounded-full bg-white absolute top-[2px] transition-all" style={{ left: allDescOn ? '13px' : '2px' }} />
+            </div>
           </button>
         </div>
         <div className="ml-auto flex gap-2 flex-wrap">

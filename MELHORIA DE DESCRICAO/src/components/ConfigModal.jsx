@@ -293,8 +293,6 @@ export default function ConfigModal() {
         <div className="px-6 py-5 space-y-1 overflow-y-auto flex-1">
           <SectionAI />
           <div className="section-divider" />
-          <SectionFieldControls />
-          <div className="section-divider" />
           <SectionPrompts />
           <div className="section-divider" />
           <SectionNotifications />
@@ -303,7 +301,7 @@ export default function ConfigModal() {
         {/* Footer */}
         <div className="px-6 py-4 flex justify-end gap-3 shrink-0" style={{ borderTop: '1px solid var(--border-subtle)' }}>
           <button onClick={() => setConfigOpen(false)} className="btn-secondary">Cancelar</button>
-          <button onClick={save} disabled={!form.applyTitles && !form.applyDescriptions} className="btn-primary">
+          <button onClick={save} className="btn-primary">
             💾 Salvar configurações
           </button>
         </div>
