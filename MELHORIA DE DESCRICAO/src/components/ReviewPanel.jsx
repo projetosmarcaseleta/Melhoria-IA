@@ -4,6 +4,7 @@ import ProcessingBar from './ProcessingBar'
 import FloatingActionBar from './FloatingActionBar'
 import { processProductsWithAI } from '../services/aiService'
 import { patchProduct } from '../services/anymarketService'
+import { exportReviewToXlsx } from '../services/excelService'
 import { parallelProcess } from '../utils/batchUtils'
 import { playCompletionSound, showBrowserNotification } from '../utils/notificationUtils'
 import { v4 as uuidv4 } from 'uuid'
@@ -244,6 +245,12 @@ export default function ReviewPanel() {
           </button>
         </div>
         <div className="ml-auto flex gap-2 flex-wrap">
+          <button onClick={() => { exportReviewToXlsx(reviewable); addToast('success', 'Planilha exportada com sucesso.') }}
+            disabled={!reviewable.length}
+            className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg transition-all"
+            style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.2)', color: 'var(--accent-emerald)' }}>
+            📥 Exportar Planilha
+          </button>
           <button onClick={handleRedoSelected} disabled={isLoading || !selected.length} className="btn-primary text-xs py-1.5">
             🔄 Refazer IA {selected.length > 0 && <span className="px-1.5 py-0.5 rounded-full text-[10px]" style={{ background: 'rgba(255,255,255,0.2)' }}>{selected.length}</span>}
           </button>

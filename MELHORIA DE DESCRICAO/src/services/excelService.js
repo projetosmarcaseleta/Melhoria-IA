@@ -94,3 +94,30 @@ export function exportLogsToXlsx(logs) {
   const date = new Date().toISOString().slice(0, 10)
   XLSX.writeFile(wb, `logs-melhoria-${date}.xlsx`)
 }
+
+/**
+ * Exporta produtos processados (revisão) como arquivo XLSX.
+ * Colunas: ID, TITULO, DESCRICAO (HTML raw)
+ */
+export function exportReviewToXlsx(products) {
+  const rows = products.map((p) => ({
+    ID: p.id,
+    TITULO: p.newTitle ?? p.title ?? '',
+    DESCRICAO: p.newDescription ?? p.description ?? '',
+  }))
+
+  const ws = XLSX.utils.json_to_sheet(rows)
+
+  // Ajusta largura das colunas
+  ws['!cols'] = [
+    { wch: 15 },   // ID
+    { wch: 60 },   // TITULO
+    { wch: 120 },  // DESCRICAO (HTML)
+  ]
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Revisão')
+
+  const date = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(wb, `revisao-produtos-${date}.xlsx`)
+}
