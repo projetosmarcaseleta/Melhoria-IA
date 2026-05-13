@@ -4,9 +4,10 @@ import ProcessingBar from './ProcessingBar'
 import FloatingActionBar from './FloatingActionBar'
 import { processProductsWithAI } from '../services/aiService'
 import { patchProduct } from '../services/anymarketService'
-import { exportReviewToXlsx } from '../services/excelService'
+import { exportReviewToXlsx, exportBlockedProductsToXlsx } from '../services/excelService'
 import { parallelProcess } from '../utils/batchUtils'
 import { playCompletionSound, showBrowserNotification } from '../utils/notificationUtils'
+import { canPatchProduct } from './ProductTable'
 import { v4 as uuidv4 } from 'uuid'
 
 const CONCURRENCY = 10
@@ -21,6 +22,13 @@ const STATUS_STYLES = {
 const STATUS_LABEL = {
   processing: 'Processando...', processed: 'Processado', applying: 'Aplicando...',
   applied: 'Aplicado', error: 'Erro',
+}
+
+const TYPE_BADGE = {
+  SIMPLE:        { text: 'Simples',     color: '#22d3ee', bg: 'rgba(34,211,238,0.10)', border: 'rgba(34,211,238,0.25)' },
+  KIT:           { text: 'Kit',         color: '#f59e0b', bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.25)' },
+  VARIATION:     { text: 'Variação',    color: '#a78bfa', bg: 'rgba(167,139,250,0.10)', border: 'rgba(167,139,250,0.25)' },
+  KIT_VARIATION: { text: 'Kit c/ Var.', color: '#fb923c', bg: 'rgba(251,146,60,0.10)', border: 'rgba(251,146,60,0.25)' },
 }
 
 // Feature E: Char counter color
@@ -56,6 +64,9 @@ export default function ReviewPanel() {
   const [selected, setSelected]       = useState([])
   const [fieldSel, setFieldSel]       = useState({})
   const [previewing, setPreviewing]   = useState({})
+  const [showBlockedBanner, setShowBlockedBanner] = useState(false)
+  const [blockedProducts, setBlockedProducts]     = useState([])
+  const [pendingTargets, setPendingTargets]       = useState([])
 
   const reviewable = products.filter((p) =>
     ['processed', 'error', 'applying', 'processing'].includes(p.status) || (p.newTitle || p.newDescription)
@@ -168,9 +179,29 @@ export default function ReviewPanel() {
   }
 
   const handleApplySelected = async () => {
-    const targets = reviewable.filter((p) => selected.includes(p.id) && p.status === 'processed')
-    if (!targets.length) { addToast('info', 'Nenhum produto "Processado" selecionado.'); return }
+    const allTargets = reviewable.filter((p) => selected.includes(p.id) && p.status === 'processed')
+    if (!allTargets.length) { addToast('info', 'Nenhum produto "Processado" selecionado.'); return }
     if (!config.gumgaToken) { setConfigOpen(true); return }
+
+    // Separa bloqueados e permitidos
+    const blocked = allTargets.filter((p) => !canPatchProduct(p))
+    const targets = allTargets.filter((p) => canPatchProduct(p))
+
+    // Se há bloqueados, mostra o banner de aviso (não aplica automaticamente)
+    if (blocked.length > 0) {
+      setBlockedProducts(blocked)
+      setPendingTargets(targets)
+      setShowBlockedBanner(true)
+      return  // Para aqui — o usuário decide no banner
+    }
+
+    // Sem bloqueados: aplica direto
+    await executeApply(targets)
+  }
+
+  // Executa o PATCH propriamente dito (chamado após confirmação)
+  const executeApply = async (targets) => {
+    if (!targets.length) return
     const fieldsMap = Object.fromEntries(targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))]))
     targets.forEach((p) => updateProductStatus(p.id, 'applying'))
     setApplying(true)
@@ -192,6 +223,27 @@ export default function ReviewPanel() {
     setSelected((prev) => prev.filter((id) => { const p = products.find((x) => x.id === id); return p && p.status !== 'applied' }))
     const stillPending = products.filter((p) => ['processed', 'error'].includes(p.status))
     if (!stillPending.length) setTab('logs')
+  }
+
+  // Ações do banner de bloqueados
+  const handleExportBlocked = () => {
+    exportBlockedProductsToXlsx(blockedProducts)
+    addToast('success', `Planilha com ${blockedProducts.length} produto(s) bloqueado(s) baixada. Altere-os manualmente na AnyMarket.`)
+  }
+
+  const handleConfirmApplyAllowed = async () => {
+    setShowBlockedBanner(false)
+    if (pendingTargets.length > 0) {
+      await executeApply(pendingTargets)
+    }
+    setPendingTargets([])
+    setBlockedProducts([])
+  }
+
+  const handleCancelBlocked = () => {
+    setShowBlockedBanner(false)
+    setPendingTargets([])
+    setBlockedProducts([])
   }
 
   if (reviewable.length === 0) {
@@ -261,6 +313,86 @@ export default function ReviewPanel() {
         </div>
       </div>
 
+      {/* Banner de Produtos Bloqueados */}
+      {showBlockedBanner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}>
+          <div className="card max-w-lg w-full mx-4 overflow-hidden animate-slideUp" style={{ border: '1px solid rgba(251,113,133,0.3)', boxShadow: '0 8px 40px rgba(0,0,0,0.5), 0 0 30px rgba(251,113,133,0.1)' }}>
+            {/* Header */}
+            <div className="px-5 py-4 flex items-center gap-3" style={{ borderBottom: '1px solid var(--border-subtle)', background: 'rgba(251,113,133,0.05)' }}>
+              <span className="text-2xl">⚠️</span>
+              <div>
+                <h3 className="text-sm font-bold" style={{ color: 'var(--accent-rose)' }}>Produtos com Cálculo de Preço Incompatível</h3>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  {blockedProducts.length} produto(s) não podem ser alterados via API
+                </p>
+              </div>
+              <button onClick={handleCancelBlocked} className="ml-auto text-lg" style={{ color: 'var(--text-muted)' }}>✕</button>
+            </div>
+
+            {/* Body */}
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                Esses produtos possuem um <strong style={{ color: 'var(--accent-amber)' }}>Cálculo de Preço</strong> que 
+                não é suportado pela API da AnyMarket. Para alterá-los, <strong>baixe a planilha</strong> e faça as 
+                modificações manualmente no painel da AnyMarket.
+              </p>
+
+              {/* Lista dos bloqueados */}
+              <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-subtle)', maxHeight: '180px', overflowY: 'auto' }}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <th className="px-3 py-2 text-left font-medium" style={{ color: 'var(--text-muted)' }}>ID</th>
+                      <th className="px-3 py-2 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Tipo</th>
+                      <th className="px-3 py-2 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Cálculo</th>
+                      <th className="px-3 py-2 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Título</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {blockedProducts.map((bp) => {
+                      const tb = TYPE_BADGE[(bp.productType ?? 'SIMPLE').toUpperCase()] ?? TYPE_BADGE.SIMPLE
+                      return (
+                        <tr key={bp.id} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                          <td className="px-3 py-1.5 font-mono" style={{ color: 'var(--text-muted)' }}>{bp.id}</td>
+                          <td className="px-3 py-1.5">
+                            <span className="badge" style={{ background: tb.bg, color: tb.color, border: `1px solid ${tb.border}`, fontSize: '10px' }}>{tb.text}</span>
+                          </td>
+                          <td className="px-3 py-1.5" style={{ color: 'var(--accent-rose)' }}>{bp.priceCalculation || '—'}</td>
+                          <td className="px-3 py-1.5 truncate max-w-[180px]" style={{ color: 'var(--text-secondary)' }} title={bp.newTitle ?? bp.title}>
+                            {bp.newTitle ?? bp.title ?? '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="px-5 py-4 flex flex-wrap items-center gap-2" style={{ borderTop: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+              <button onClick={handleExportBlocked}
+                className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg transition-all"
+                style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#f59e0b' }}>
+                📥 Baixar Planilha ({blockedProducts.length})
+              </button>
+              {pendingTargets.length > 0 && (
+                <button onClick={handleConfirmApplyAllowed}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg transition-all"
+                  style={{ background: 'linear-gradient(135deg, #059669, #047857)', color: 'white' }}>
+                  🚀 Aplicar {pendingTargets.length} Permitido(s)
+                </button>
+              )}
+              <button onClick={handleCancelBlocked}
+                className="ml-auto flex items-center gap-1 text-xs font-medium px-3 py-2 rounded-lg transition-all"
+                style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isLoading && (ui.progress?.total ?? 0) > 0 && (
         <div className="card p-4">
           <ProcessingBar current={ui.progress?.current ?? 0} total={ui.progress?.total ?? 0}
@@ -285,6 +417,23 @@ export default function ReviewPanel() {
               <div className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(p.id)} className="checkbox-custom" />
                 <span className="font-mono text-xs" style={{ color: 'var(--text-muted)' }}>{p.id}</span>
+                {(() => {
+                  const tb = TYPE_BADGE[(p.productType ?? 'SIMPLE').toUpperCase()] ?? TYPE_BADGE.SIMPLE
+                  const allowed = canPatchProduct(p)
+                  return (
+                    <>
+                      <span className="badge" style={{ background: tb.bg, color: tb.color, border: `1px solid ${tb.border}`, fontSize: '10px' }}>
+                        {tb.text}
+                      </span>
+                      {!allowed && (
+                        <span className="badge" style={{ background: 'var(--accent-rose-glow)', color: 'var(--accent-rose)', border: '1px solid rgba(251,113,133,0.25)', fontSize: '10px' }}
+                          title={`PATCH bloqueado: ${p.productType} com cálculo ${p.priceCalculation}`}>
+                          🔒 Bloqueado
+                        </span>
+                      )}
+                    </>
+                  )
+                })()}
                 {sl && <span className="badge" style={ss}>{sl}</span>}
                 <div className="flex items-center gap-2 ml-2">
                   {['titulo', 'descricao'].map((field) => {

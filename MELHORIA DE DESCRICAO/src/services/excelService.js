@@ -99,6 +99,37 @@ export function exportLogsToXlsx(logs) {
  * Exporta produtos processados (revisão) como arquivo XLSX.
  * Colunas: ID, TITULO, DESCRICAO (HTML raw)
  */
+/**
+ * Exporta produtos bloqueados (que não podem ser PATCHados via API)
+ * para que o usuário altere manualmente na AnyMarket.
+ * Colunas: ID, TIPO, CALCULO_PRECO, TITULO_NOVO, DESCRICAO_NOVA
+ */
+export function exportBlockedProductsToXlsx(products) {
+  const rows = products.map((p) => ({
+    ID: p.id,
+    TIPO: p.productType ?? 'SIMPLE',
+    CALCULO_PRECO: p.priceCalculation ?? '',
+    TITULO_NOVO: p.newTitle ?? p.title ?? '',
+    DESCRICAO_NOVA: p.newDescription ?? p.description ?? '',
+  }))
+
+  const ws = XLSX.utils.json_to_sheet(rows)
+
+  ws['!cols'] = [
+    { wch: 15 },   // ID
+    { wch: 18 },   // TIPO
+    { wch: 20 },   // CALCULO_PRECO
+    { wch: 60 },   // TITULO_NOVO
+    { wch: 120 },  // DESCRICAO_NOVA
+  ]
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Produtos Bloqueados')
+
+  const date = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(wb, `produtos-bloqueados-alteracao-manual-${date}.xlsx`)
+}
+
 export function exportReviewToXlsx(products) {
   const rows = products.map((p) => ({
     ID: p.id,

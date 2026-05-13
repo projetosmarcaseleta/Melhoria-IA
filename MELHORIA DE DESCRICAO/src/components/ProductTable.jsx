@@ -22,6 +22,27 @@ const STATUS_LABEL = {
   error:      { text: 'Erro',           style: { background: 'var(--accent-rose-glow)', color: 'var(--accent-rose)' } },
 }
 
+// Badge visual para cada tipo de produto
+const TYPE_BADGE = {
+  SIMPLE:        { text: 'Simples',        color: '#22d3ee', bg: 'rgba(34,211,238,0.10)', border: 'rgba(34,211,238,0.25)' },
+  KIT:           { text: 'Kit',            color: '#f59e0b', bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.25)' },
+  VARIATION:     { text: 'Variação',       color: '#a78bfa', bg: 'rgba(167,139,250,0.10)', border: 'rgba(167,139,250,0.25)' },
+  KIT_VARIATION: { text: 'Kit c/ Var.',    color: '#fb923c', bg: 'rgba(251,146,60,0.10)', border: 'rgba(251,146,60,0.25)' },
+}
+
+/**
+ * Retorna true se o produto pode receber PATCH.
+ * Regra: SIMPLE = sempre pode. KIT = só se priceCalculation === 'NONE'.
+ * VARIATION e KIT_VARIATION seguem mesma regra do KIT.
+ */
+export function canPatchProduct(product) {
+  const type = (product.productType ?? 'SIMPLE').toUpperCase()
+  if (type === 'SIMPLE') return true
+  // KIT, VARIATION, KIT_VARIATION: só pode se cálculo de preço for NONE
+  const calc = (product.priceCalculation ?? '').toUpperCase()
+  return calc === 'NONE' || calc === ''
+}
+
 export default function ProductTable() {
   const products = useStore((s) => s.products)
   const setProducts = useStore((s) => s.setProducts)
@@ -195,23 +216,34 @@ export default function ProductTable() {
                   <th className="w-8 px-3 py-2.5"><input type="checkbox" checked={allSelected} onChange={toggleAll} className="checkbox-custom" /></th>
                   <th className="px-3 py-2.5 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>ID</th>
                   <th className="px-3 py-2.5 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Título atual</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Tipo</th>
                   <th className="px-3 py-2.5 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Título novo</th>
                   <th className="px-3 py-2.5 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={5} className="px-3 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Nenhum produto encontrado.</td></tr>
+                  <tr><td colSpan={6} className="px-3 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Nenhum produto encontrado.</td></tr>
                 ) : filtered.map((p) => {
                   const sl = STATUS_LABEL[p.status] ?? STATUS_LABEL.idle
+                  const typeBadge = TYPE_BADGE[(p.productType ?? 'SIMPLE').toUpperCase()] ?? TYPE_BADGE.SIMPLE
+                  const patchAllowed = canPatchProduct(p)
                   return (
-                    <tr key={p.id} className="transition-colors"
+                    <tr key={p.id + '-' + p.idSku} className="transition-colors"
                       style={{ borderBottom: '1px solid var(--border-subtle)', background: ui.selectedIds.includes(p.id) ? 'rgba(99,102,241,0.05)' : 'transparent' }}
                       onMouseEnter={(e) => e.currentTarget.style.background = ui.selectedIds.includes(p.id) ? 'rgba(99,102,241,0.08)' : 'rgba(255,255,255,0.02)'}
                       onMouseLeave={(e) => e.currentTarget.style.background = ui.selectedIds.includes(p.id) ? 'rgba(99,102,241,0.05)' : 'transparent'}>
                       <td className="px-3 py-2"><input type="checkbox" checked={ui.selectedIds.includes(p.id)} onChange={() => toggleSelectId(p.id)} className="checkbox-custom" /></td>
                       <td className="px-3 py-2 font-mono text-xs whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>{p.id}</td>
                       <td className="px-3 py-2 max-w-xs truncate" style={{ color: 'var(--text-secondary)' }} title={p.title}>{p.title || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>—</span>}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className="badge" style={{ background: typeBadge.bg, color: typeBadge.color, border: `1px solid ${typeBadge.border}` }}>
+                          {typeBadge.text}
+                        </span>
+                        {!patchAllowed && (
+                          <span title={`PATCH bloqueado: ${p.productType} com cálculo ${p.priceCalculation}`} style={{ marginLeft: 6, cursor: 'help', fontSize: '12px' }}>🔒</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2 max-w-xs truncate" title={p.newTitle}>{p.newTitle ? <span className="font-medium" style={{ color: 'var(--accent-emerald)' }}>{p.newTitle}</span> : <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>—</span>}</td>
                       <td className="px-3 py-2 whitespace-nowrap"><span className="badge" style={sl.style}>{sl.text}</span></td>
                     </tr>

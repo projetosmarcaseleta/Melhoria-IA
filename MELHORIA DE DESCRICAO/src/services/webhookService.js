@@ -35,9 +35,12 @@ export async function fetchProductsFromWebhook(ids) {
 
   return raw.map((item) => ({
     id: String(item.ID ?? item.id ?? ''),
+    idSku: String(item.ID_SKU ?? item.idSku ?? ''),
     title: item.TITULO ?? item.title ?? '',
     description: item['DESCRIÇÃO'] ?? item.DESCRICAO ?? item.description ?? '',
     characteristics: normalizeCharacteristics(item.CARACTERISTICAS ?? item.characteristics ?? ''),
+    productType: item.TIPO ?? item.productType ?? 'SIMPLE',
+    priceCalculation: item['CÁLCULO DE PREÇO'] ?? item.CALCULO_DE_PRECO ?? item.priceCalculation ?? '',
     status: 'idle',
   }))
 }
