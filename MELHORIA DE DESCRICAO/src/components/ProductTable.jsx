@@ -38,10 +38,11 @@ const TYPE_BADGE = {
 export function canPatchProduct(product) {
   const type = (product.productType ?? 'SIMPLE').toUpperCase()
   if (type === 'SIMPLE') return true
-  // KIT, VARIATION, KIT_VARIATION: só pode se cálculo de preço for NONE
-  const calc = (product.priceCalculation ?? '').toUpperCase()
-  return calc === 'NONE' || calc === ''
+  // KIT, VARIATION, KIT_VARIATION: só pode se cálculo de preço for estritamente NONE
+  const calc = (product.priceCalculation ?? '').toString().trim().toUpperCase()
+  return calc === 'NONE'
 }
+
 
 export default function ProductTable() {
   const products = useStore((s) => s.products)
