@@ -28,7 +28,7 @@ export default function TokenBar() {
           <span className="text-base">🔑</span>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>gumgaToken</p>
+          <p className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Token AnyMarket</p>
           <p className="text-sm font-mono truncate" style={{ color: 'var(--accent-emerald)' }}>
             {showToken ? config.gumgaToken : '•'.repeat(Math.min(config.gumgaToken.length, 32))}
           </p>
