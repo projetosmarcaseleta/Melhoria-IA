@@ -79,11 +79,21 @@ export default function ReviewPanel() {
   const selectAll   = () => setSelected(reviewable.map((p) => p.id))
   const deselectAll = () => setSelected([])
 
-  const getFieldSelFor = (id) => fieldSel[id] ?? { titulo: true, descricao: true }
+  const getFieldSelFor = (id) => {
+    if (fieldSel[id]) return fieldSel[id]
+    const p = products.find((x) => x.id === id)
+    if (!p) return { titulo: config.applyTitles, descricao: config.applyDescriptions }
+    const hasNewTitle = p.newTitle !== undefined && p.newTitle !== null && p.newTitle !== ''
+    const hasNewDesc = p.newDescription !== undefined && p.newDescription !== null && p.newDescription !== ''
+    if (!hasNewTitle && !hasNewDesc) {
+      return { titulo: config.applyTitles, descricao: config.applyDescriptions }
+    }
+    return { titulo: hasNewTitle, descricao: hasNewDesc }
+  }
 
   const toggleFieldSel = (id, field) => {
     setFieldSel((prev) => {
-      const cur  = prev[id] ?? { titulo: true, descricao: true }
+      const cur  = prev[id] ?? getFieldSelFor(id)
       const next = { ...cur, [field]: !cur[field] }
       if (!next.titulo && !next.descricao) return prev
       return { ...prev, [id]: next }
@@ -99,7 +109,7 @@ export default function ReviewPanel() {
     setFieldSel((prev) => {
       const next = { ...prev }
       for (const p of reviewable) {
-        const cur = next[p.id] ?? { titulo: true, descricao: true }
+        const cur = next[p.id] ?? getFieldSelFor(p.id)
         // Não deixa ambos false
         if (!newVal && !cur.descricao) continue
         next[p.id] = { ...cur, titulo: newVal }
@@ -113,7 +123,7 @@ export default function ReviewPanel() {
     setFieldSel((prev) => {
       const next = { ...prev }
       for (const p of reviewable) {
-        const cur = next[p.id] ?? { titulo: true, descricao: true }
+        const cur = next[p.id] ?? getFieldSelFor(p.id)
         // Não deixa ambos false
         if (!newVal && !cur.titulo) continue
         next[p.id] = { ...cur, descricao: newVal }

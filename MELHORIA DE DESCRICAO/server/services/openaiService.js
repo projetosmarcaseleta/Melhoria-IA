@@ -22,10 +22,10 @@ function applyVars(template, { title, description, characteristics }) {
 }
 
 /** Gera nova descrição HTML usando o prompt configurado */
-export async function generateDescricao({ title, description, characteristics }) {
-  const prompts = loadPrompts()
-  const systemPrompt = prompts.descricao.replace(/\n\nDADOS DISPONÍVEIS[\s\S]*$/, '').trim()
-  const userPrompt = applyVars(prompts.descricao.replace(/^[\s\S]*?\n\nDADOS DISPONÍVEIS/, 'DADOS DISPONÍVEIS'), { title, description, characteristics })
+export async function generateDescricao({ title, description, characteristics }, customPrompt) {
+  const template = customPrompt ?? loadPrompts().descricao
+  const systemPrompt = template.replace(/\n\nDADOS DISPONÍVEIS[\s\S]*$/, '').trim()
+  const userPrompt = applyVars(template.replace(/^[\s\S]*?\n\nDADOS DISPONÍVEIS/, 'DADOS DISPONÍVEIS'), { title, description, characteristics })
 
   const response = await client.chat.completions.create({
     model: MODEL,
@@ -40,10 +40,10 @@ export async function generateDescricao({ title, description, characteristics })
 }
 
 /** Gera novo título usando o prompt configurado */
-export async function generateTitulo({ title, description, characteristics }) {
-  const prompts = loadPrompts()
-  const systemPrompt = prompts.titulo.replace(/\n\nDADOS DISPONÍVEIS[\s\S]*$/, '').trim()
-  const userPrompt = applyVars(prompts.titulo.replace(/^[\s\S]*?\n\nDADOS DISPONÍVEIS/, 'DADOS DISPONÍVEIS'), { title, description, characteristics })
+export async function generateTitulo({ title, description, characteristics }, customPrompt) {
+  const template = customPrompt ?? loadPrompts().titulo
+  const systemPrompt = template.replace(/\n\nDADOS DISPONÍVEIS[\s\S]*$/, '').trim()
+  const userPrompt = applyVars(template.replace(/^[\s\S]*?\n\nDADOS DISPONÍVEIS/, 'DADOS DISPONÍVEIS'), { title, description, characteristics })
 
   const response = await client.chat.completions.create({
     model: MODEL,

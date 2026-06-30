@@ -8,7 +8,7 @@ import useStore from '../store/useStore'
  * Retorna: [{id, newTitle?, newDescription?, error?}]
  */
 export async function processProductsWithAI(products, fields = ['title', 'description']) {
-  const { aiProvider, geminiApiKey } = useStore.getState().config
+  const { aiProvider, geminiApiKey, promptMode, customPrompts } = useStore.getState().config
 
   const payload = products.map((p) => ({
     id: p.id,
@@ -23,6 +23,8 @@ export async function processProductsWithAI(products, fields = ['title', 'descri
       products: payload,
       fields,
       provider: aiProvider ?? 'openai',
+      promptMode,
+      customPrompts,
       ...(aiProvider === 'gemini' && geminiApiKey ? { geminiApiKey } : {}),
     },
     { timeout: 120_000 }

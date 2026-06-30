@@ -34,10 +34,10 @@ function makeClient(apiKey) {
 }
 
 /** Gera nova descrição HTML usando Gemini */
-export async function generateDescricaoGemini({ title, description, characteristics }, apiKey) {
+export async function generateDescricaoGemini({ title, description, characteristics }, apiKey, customPrompt) {
   const ai = makeClient(apiKey)
   const { systemInstruction, userContent } = splitPrompt(
-    loadPrompts().descricao,
+    customPrompt ?? loadPrompts().descricao,
     { title, description, characteristics }
   )
 
@@ -54,10 +54,10 @@ export async function generateDescricaoGemini({ title, description, characterist
 }
 
 /** Gera novo título usando Gemini */
-export async function generateTituloGemini({ title, description, characteristics }, apiKey) {
+export async function generateTituloGemini({ title, description, characteristics }, apiKey, customPrompt) {
   const ai = makeClient(apiKey)
   const { systemInstruction, userContent } = splitPrompt(
-    loadPrompts().titulo,
+    customPrompt ?? loadPrompts().titulo,
     { title, description, characteristics }
   )
 

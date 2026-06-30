@@ -51,6 +51,7 @@ export default function ProductTable() {
   const updateProductResult = useStore((s) => s.updateProductResult)
   const addToast = useStore((s) => s.addToast)
   const config = useStore((s) => s.config)
+  const setConfig = useStore((s) => s.setConfig)
   const ui = useStore((s) => s.ui)
   const setProcessing = useStore((s) => s.setProcessing)
   const setFetchingWebhook = useStore((s) => s.setFetchingWebhook)
@@ -105,6 +106,15 @@ export default function ProductTable() {
 
   // ── Processar com IA ────────────────────────────────────────────────────
   const handleProcessAI = async () => {
+    const fields = []
+    if (config.applyTitles) fields.push('title')
+    if (config.applyDescriptions) fields.push('description')
+
+    if (fields.length === 0) {
+      addToast('warning', 'Selecione pelo menos um campo (Título ou Descrição) para processar.')
+      return
+    }
+
     const targets = products.filter((p) =>
       (ui.selectedIds.length ? ui.selectedIds.includes(p.id) : true) && p.status === 'idle'
     )
@@ -114,10 +124,17 @@ export default function ProductTable() {
     setProgress(0, targets.length)
     await parallelProcess(targets, CONCURRENCY, async (p) => {
       try {
-        const results = await processProductsWithAI([p])
+        const results = await processProductsWithAI([p], fields)
         const r = results[0]
-        if (r.error) updateProductStatus(r.id, 'error')
-        else updateProductResult(r.id, r.newTitle, r.newDescription)
+        if (r.error) {
+          updateProductStatus(r.id, 'error')
+        } else {
+          updateProductResult(
+            r.id,
+            fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
+            fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? '')
+          )
+        }
       } catch (e) {
         updateProductStatus(p.id, 'error')
         addToast('error', `Erro produto ${p.id}: ` + e.message)
@@ -202,11 +219,26 @@ export default function ProductTable() {
               <option value="all">Todos os status</option>
               {Object.entries(STATUS_LABEL).map(([k, v]) => (<option key={k} value={k}>{v.text}</option>))}
             </select>
-            <div className="ml-auto flex gap-2">
-              <button onClick={handleProcessAI} disabled={isLoading} className="btn-primary text-xs py-2">🤖 3. Processar com IA</button>
-              <button onClick={() => setTab('review')} disabled={isLoading} className="btn-primary text-xs py-2" style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}>👁️ 4. Revisar</button>
-              <button onClick={clearProducts} disabled={isLoading} className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors" title="Limpar lista"
-                style={{ background: 'rgba(251,113,133,0.08)', color: 'var(--accent-rose)' }}>🗑️</button>
+            <div className="ml-auto flex items-center gap-3">
+              {/* Seleção de campos para processar */}
+              <div className="flex items-center gap-3 mr-1 text-xs" style={{ borderRight: '1px solid var(--border-subtle)', paddingRight: '12px' }}>
+                <span className="font-semibold uppercase tracking-wider text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Campos:</span>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none font-medium transition-colors" style={{ color: config.applyTitles ? 'var(--accent-indigo-light)' : 'var(--text-muted)' }}>
+                  <input type="checkbox" checked={config.applyTitles} onChange={(e) => setConfig({ applyTitles: e.target.checked })} className="checkbox-custom" />
+                  <span>Título</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none font-medium transition-colors" style={{ color: config.applyDescriptions ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
+                  <input type="checkbox" checked={config.applyDescriptions} onChange={(e) => setConfig({ applyDescriptions: e.target.checked })} className="checkbox-custom" />
+                  <span>Descrição</span>
+                </label>
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={handleProcessAI} disabled={isLoading} className="btn-primary text-xs py-2">🤖 3. Processar com IA</button>
+                <button onClick={() => setTab('review')} disabled={isLoading} className="btn-primary text-xs py-2" style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}>👁️ 4. Revisar</button>
+                <button onClick={clearProducts} disabled={isLoading} className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors" title="Limpar lista"
+                  style={{ background: 'rgba(251,113,133,0.08)', color: 'var(--accent-rose)' }}>🗑️</button>
+              </div>
             </div>
           </div>
 

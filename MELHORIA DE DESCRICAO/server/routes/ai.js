@@ -16,7 +16,7 @@ const router = Router()
  */
 router.post('/process', async (req, res, next) => {
   try {
-    const { products, fields, provider = 'openai', geminiApiKey } = req.body ?? {}
+    const { products, fields, provider = 'openai', geminiApiKey, promptMode, customPrompts } = req.body ?? {}
 
     if (!Array.isArray(products) || products.length === 0) {
       return res.status(400).json({ error: 'products deve ser um array não vazio' })
@@ -26,8 +26,12 @@ router.post('/process', async (req, res, next) => {
     const doDesc  = !fields || fields.includes('description')
     const useGemini = provider === 'gemini'
 
-    const genTitulo   = (p) => useGemini ? generateTituloGemini(p, geminiApiKey)   : generateTitulo(p)
-    const genDescricao = (p) => useGemini ? generateDescricaoGemini(p, geminiApiKey) : generateDescricao(p)
+    const useCustom = promptMode === 'custom' && customPrompts
+    const customTitle = useCustom ? customPrompts.titulo : null
+    const customDesc = useCustom ? customPrompts.descricao : null
+
+    const genTitulo   = (p) => useGemini ? generateTituloGemini(p, geminiApiKey, customTitle)   : generateTitulo(p, customTitle)
+    const genDescricao = (p) => useGemini ? generateDescricaoGemini(p, geminiApiKey, customDesc) : generateDescricao(p, customDesc)
 
     const results = []
 
