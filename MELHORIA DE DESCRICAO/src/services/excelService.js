@@ -54,6 +54,79 @@ export function parseIdsFromExcel(file) {
 }
 
 /**
+ * Converte texto plano ou markdown para HTML simples contendo apenas as tags <p>, <ul> e <li>.
+ * Se o texto já contiver tags HTML, garante a limpeza de blocos de código markdown.
+ */
+export function convertToHtml(text) {
+  if (!text) return ''
+
+  let content = text.trim()
+
+  // 1. Remove markdown code blocks if present (e.g. ```html ... ```)
+  if (content.startsWith('```')) {
+    content = content.replace(/^```[a-zA-Z0-9]*\n?/, '')
+    content = content.replace(/\n?```$/, '')
+    content = content.trim()
+  }
+
+  // Verifica se já contém tags HTML comuns
+  const hasHtmlTags = /<[a-z][\s\S]*>/i.test(content)
+
+  if (!hasHtmlTags) {
+    // Converte negrito (markdown) para <strong>
+    content = content.replace(/(\*\*|__)(.*?)\1/g, '<strong>$2</strong>')
+
+    // Converte itálico (markdown) para <em>
+    content = content.replace(/(\*|_)(.*?)\1/g, '<em>$2</em>')
+
+    // Processa parágrafos e listas
+    const lines = content.split('\n')
+    let inList = false
+    const processedLines = []
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+
+      if (!line) {
+        if (inList) {
+          processedLines.push('</ul>')
+          inList = false
+        }
+        continue
+      }
+
+      // Detecta itens de lista (- item, * item, + item)
+      const listMatch = line.match(/^[-*+]\s+(.*)$/)
+      if (listMatch) {
+        if (!inList) {
+          processedLines.push('<ul>')
+          inList = true
+        }
+        processedLines.push(`<li>${listMatch[1]}</li>`)
+      } else {
+        if (inList) {
+          processedLines.push('</ul>')
+          inList = false
+        }
+        processedLines.push(`<p>${line}</p>`)
+      }
+    }
+
+    if (inList) {
+      processedLines.push('</ul>')
+    }
+
+    content = processedLines.join('\n')
+  } else {
+    // Se já é HTML, apenas garante que negritos/itálicos markdown residuais dentro sejam tratados
+    content = content.replace(/(\*\*|__)(.*?)\1/g, '<strong>$2</strong>')
+    content = content.replace(/(\*|_)(.*?)\1/g, '<em>$2</em>')
+  }
+
+  return content
+}
+
+/**
  * Exporta o array de logs como arquivo XLSX.
  * Colunas: ID, TITULO_ANTES, TITULO_DEPOIS, DESC_ANTES, DESC_DEPOIS, STATUS, DATA_HORA
  */
@@ -67,8 +140,8 @@ export function exportLogsToXlsx(logs) {
         ID: log.productId,
         TITULO_ANTES: titulo?.before ?? '',
         TITULO_DEPOIS: titulo?.after ?? '',
-        DESCRICAO_ANTES: descricao?.before ?? '',
-        DESCRICAO_DEPOIS: descricao?.after ?? '',
+        DESCRICAO_ANTES: convertToHtml(descricao?.before ?? ''),
+        DESCRICAO_DEPOIS: convertToHtml(descricao?.after ?? ''),
         STATUS: log.status === 'applied' ? 'Aplicado' : log.status === 'undone' ? 'Desfeito' : 'Erro',
         DATA_HORA: new Date(log.timestamp).toLocaleString('pt-BR'),
       },
@@ -96,10 +169,6 @@ export function exportLogsToXlsx(logs) {
 }
 
 /**
- * Exporta produtos processados (revisão) como arquivo XLSX.
- * Colunas: ID, TITULO, DESCRICAO (HTML raw)
- */
-/**
  * Exporta produtos bloqueados (que não podem ser PATCHados via API)
  * para que o usuário altere manualmente na AnyMarket.
  * Colunas: ID, TIPO, CALCULO_PRECO, TITULO_NOVO, DESCRICAO_NOVA
@@ -110,7 +179,7 @@ export function exportBlockedProductsToXlsx(products) {
     TIPO: p.productType ?? 'SIMPLE',
     CALCULO_PRECO: p.priceCalculation ?? '',
     TITULO_NOVO: p.newTitle ?? p.title ?? '',
-    DESCRICAO_NOVA: p.newDescription ?? p.description ?? '',
+    DESCRICAO_NOVA: convertToHtml(p.newDescription ?? p.description ?? ''),
   }))
 
   const ws = XLSX.utils.json_to_sheet(rows)
@@ -134,7 +203,7 @@ export function exportReviewToXlsx(products) {
   const rows = products.map((p) => ({
     ID: p.id,
     TITULO: p.newTitle ?? p.title ?? '',
-    DESCRICAO: p.newDescription ?? p.description ?? '',
+    DESCRICAO: convertToHtml(p.newDescription ?? p.description ?? ''),
   }))
 
   const ws = XLSX.utils.json_to_sheet(rows)
