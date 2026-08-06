@@ -32,6 +32,16 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 // Remover após migração completa do frontend
 app.use('/api', aiRouter)
 
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+// Servir arquivos estáticos do frontend (dist) para produção
+const distPath = path.join(__dirname, '../dist')
+app.use(express.static(distPath))
+
 // ── Rotas protegidas (requerem autenticação) ───────────────────
 app.use('/api/clients', requireAuth, clientsRouter)
 app.use('/api/generate', requireAuth, generateRouter)
@@ -42,6 +52,16 @@ app.use('/api/knowledge', requireAuth, knowledgeRouter)
 app.use('/api/insights', requireAuth, insightsRouter)
 app.use('/api/skills', requireAuth, skillsRouter)
 app.use('/api/operators', requireAuth, operatorsRouter)
+
+// Catch-all para SPA Frontend (qualquer rota que não seja /api)
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+    return next()
+  }
+  res.sendFile(path.join(distPath, 'index.html'), (err) => {
+    if (err) next()
+  })
+})
 
 // ── Middleware de erro global ──────────────────────────────────
 // eslint-disable-next-line no-unused-vars
