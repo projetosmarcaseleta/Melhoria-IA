@@ -1,0 +1,54 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install and Build Frontend
+        run: |
+          if [ -d "MELHORIA DE DESCRICAO" ]; then
+            cd "MELHORIA DE DESCRICAO"
+          fi
+          npm install
+          npm run build
+
+      - name: Transfer Files via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "."
+          target: "/var/www/melhoria-ia"
+          rm: false
+
+      - name: Restart Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            cd /var/www/melhoria-ia
+            if [ -d "MELHORIA DE DESCRICAO" ]; then
+              cp -rf "MELHORIA DE DESCRICAO/"* ./ 2>/dev/null || true
+            fi
+            npm install --production
+            pm2 restart melhoria-ia || pm2 start server/index.js --name melhoria-ia
+            echo "✅ Deploy finalizado com sucesso na VPS!"
