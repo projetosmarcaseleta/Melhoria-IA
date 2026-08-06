@@ -1,0 +1,61 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install and Build (Frontend)
+        run: |
+          if [ -d "MELHORIA DE DESCRICAO" ]; then
+            cd "MELHORIA DE DESCRICAO"
+          fi
+          npm install
+          npm run build
+
+      - name: Deploy Files to VPS via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "."
+          target: "/var/www/melhoria-ia"
+          rm: false
+
+      - name: Execute Remote SSH Commands (Sync Folders & Restart PM2)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Entra no diretório alvo da VPS
+            cd /var/www/melhoria-ia
+            
+            # Se os arquivos estiverem dentro da subpasta "MELHORIA DE DESCRICAO", copia tudo para a raiz /var/www/melhoria-ia
+            if [ -d "/var/www/melhoria-ia/MELHORIA DE DESCRICAO" ]; then
+              cp -rf "/var/www/melhoria-ia/MELHORIA DE DESCRICAO/"* /var/www/melhoria-ia/ 2>/dev/null || true
+            fi
+            
+            # Instala dependências do servidor
+            npm install --production
+            
+            # Reinicia o servidor Node/Express via PM2
+            pm2 restart melhoria-ia || pm2 start server/index.js --name melhoria-ia
+            
+            echo "✅ Deploy concluído na VPS!"
