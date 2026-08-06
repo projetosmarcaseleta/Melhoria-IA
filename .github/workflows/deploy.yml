@@ -19,32 +19,39 @@ jobs:
 
       - name: Install and Build (Frontend)
         run: |
-          cd "MELHORIA DE DESCRICAO"
+          if [ -d "MELHORIA DE DESCRICAO" ]; then
+            cd "MELHORIA DE DESCRICAO"
+          fi
           npm install
           npm run build
 
       - name: Deploy Files to VPS via SCP
-        uses: appleboy/scp-action@master
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          # Copia tudo para o diretório de destino na VPS
           source: "."
           target: "/var/www/melhoria-ia"
+          rm: false
 
       - name: Execute Remote SSH Commands (Restart PM2)
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Entra na pasta do projeto no servidor
-            cd /var/www/melhoria-ia/"MELHORIA DE DESCRICAO"
+            if [ -d "/var/www/melhoria-ia/MELHORIA DE DESCRICAO" ]; then
+              cd "/var/www/melhoria-ia/MELHORIA DE DESCRICAO"
+            else
+              cd "/var/www/melhoria-ia"
+            fi
             
-            # Instala dependências do backend
-            npm install --production
+            # Instala dependências do backend se package.json existir
+            if [ -f "package.json" ]; then
+              npm install --production
+            fi
             
             # Reinicia o backend pelo PM2
             pm2 restart melhoria-ia || pm2 start server/index.js --name melhoria-ia
