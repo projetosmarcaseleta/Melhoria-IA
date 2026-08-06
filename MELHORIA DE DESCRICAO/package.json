@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite --host\" \"node server/index.js\"",
+    "dev": "concurrently npm:vite npm:server",
+    "vite": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server/index.js"
@@ -15,6 +16,8 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "firebase": "^12.17.1",
+    "firebase-admin": "^14.2.0",
     "openai": "^4.52.7",
     "react": "^18.3.1",
     "react-diff-viewer-continued": "^3.3.1",

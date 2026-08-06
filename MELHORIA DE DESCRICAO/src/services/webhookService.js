@@ -1,4 +1,15 @@
 import axios from 'axios'
+import useStore from '../store/useStore'
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+function getAuthHeaders() {
+  const session = useStore.getState().auth.session
+  if (session?.access_token) {
+    return { Authorization: `Bearer ${session.access_token}` }
+  }
+  return {}
+}
 
 /**
  * Consulta os produtos via backend proxy → n8n webhook PostgreSQL.
@@ -8,10 +19,13 @@ import axios from 'axios'
  */
 export async function fetchProductsFromWebhook(ids) {
   const response = await axios.post(
-    '/edit/api/anymarket/fetch-products',
+    `${API_BASE}/api/anymarket/fetch-products`,
     { ids },
     {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
       timeout: 60_000,
     }
   )

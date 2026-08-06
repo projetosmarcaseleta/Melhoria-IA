@@ -2,64 +2,65 @@ import useStore from '../store/useStore'
 
 export default function FloatingActionBar({ onProcess, onApply, disabled }) {
   const selectedIds = useStore((s) => s.ui.selectedIds)
+  const activeTab = useStore((s) => s.ui.activeTab)
   const clearSelection = useStore((s) => s.clearSelection)
   const products = useStore((s) => s.products)
 
-  if (selectedIds.length === 0) return null
+  // Só exibe a barra flutuante nas abas 'products' ou 'review' e quando houver seleção
+  if (!['products', 'review'].includes(activeTab) || selectedIds.length === 0) {
+    return null
+  }
 
   const selectedProducts = products.filter((p) => selectedIds.includes(p.id))
   const processable = selectedProducts.filter((p) => p.status === 'idle').length
   const applyable = selectedProducts.filter((p) => p.status === 'processed').length
 
   return (
-    <div
-      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-3 rounded-2xl animate-slideUp"
-      style={{
-        background: 'rgba(28,28,40,0.92)',
-        backdropFilter: 'blur(20px)',
-        border: '1px solid rgba(99,102,241,0.25)',
-        boxShadow: '0 8px 40px rgba(0,0,0,0.5), 0 0 24px rgba(99,102,241,0.15)',
-      }}
-    >
-      <div className="flex items-center gap-2 pr-3" style={{ borderRight: '1px solid var(--border-default)' }}>
-        <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white"
-          style={{ background: 'var(--accent-indigo)' }}>
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-3 rounded-2xl bg-slate-900/95 border border-indigo-500/40 shadow-2xl shadow-indigo-500/20 backdrop-blur-xl animate-slideUp">
+      
+      {/* Contagem de Seleção */}
+      <div className="flex items-center gap-2 pr-3 border-r border-slate-800">
+        <div className="w-7 h-7 rounded-xl bg-indigo-600 text-white font-extrabold text-xs flex items-center justify-center shadow-md shadow-indigo-600/30">
           {selectedIds.length}
         </div>
-        <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+        <span className="text-xs font-bold text-slate-200">
           selecionado{selectedIds.length > 1 ? 's' : ''}
         </span>
       </div>
 
-      {processable > 0 && (
+      {/* Ação: Processar IA */}
+      {processable > 0 && onProcess && (
         <button
           onClick={onProcess}
           disabled={disabled}
-          className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg transition-all disabled:opacity-40"
-          style={{ background: 'var(--accent-indigo)', color: 'white' }}
+          className="px-4 py-2 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5"
         >
-          🤖 Processar IA
-          <span className="px-1.5 py-0.5 rounded-full text-[10px]" style={{ background: 'rgba(255,255,255,0.2)' }}>{processable}</span>
+          <span>🤖 Processar IA</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white">
+            {processable}
+          </span>
         </button>
       )}
 
-      {applyable > 0 && (
+      {/* Ação: Aplicar AnyMarket */}
+      {applyable > 0 && onApply && (
         <button
           onClick={onApply}
           disabled={disabled}
-          className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg transition-all disabled:opacity-40"
-          style={{ background: 'linear-gradient(135deg, #059669, #047857)', color: 'white' }}
+          className="px-4 py-2 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/30 transition-all flex items-center gap-1.5"
         >
-          🚀 Aplicar
-          <span className="px-1.5 py-0.5 rounded-full text-[10px]" style={{ background: 'rgba(255,255,255,0.2)' }}>{applyable}</span>
+          <span>🚀 Aplicar AnyMarket</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white">
+            {applyable}
+          </span>
         </button>
       )}
 
+      {/* Limpar Seleção (Fechar) */}
       <button
         onClick={clearSelection}
-        className="w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-all"
-        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-        title="Limpar seleção"
+        className="w-8 h-8 rounded-xl flex items-center justify-center bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700 transition-all text-xs"
+        title="Desmarcar tudo / Fechar barra"
       >
         ✕
       </button>

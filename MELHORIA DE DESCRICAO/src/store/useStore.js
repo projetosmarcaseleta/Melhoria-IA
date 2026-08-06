@@ -6,6 +6,35 @@ const STORAGE_KEY = 'melhoria-config'
 const useStore = create(
   persist(
     (set, get) => ({
+      // ─── Autenticação ──────────────────────────────────────────────
+      auth: {
+        user: null,       // { id, email, name, role }
+        session: null,    // Supabase session object
+        isLoading: true,  // verificando sessão ao iniciar
+      },
+
+      setAuth: (user, session) =>
+        set((s) => ({
+          auth: { ...s.auth, user, session, isLoading: false },
+        })),
+
+      clearAuth: () =>
+        set((s) => ({
+          auth: { user: null, session: null, isLoading: false },
+        })),
+
+      setAuthLoading: (v) =>
+        set((s) => ({
+          auth: { ...s.auth, isLoading: v },
+        })),
+
+      // ─── Cliente Ativo ──────────────────────────────────────────────
+      activeClient: null, // { id, name, slug, settings, anymarket_token, ... }
+      clients: [],        // lista de todos os clientes disponíveis
+
+      setActiveClient: (client) => set({ activeClient: client }),
+      setClients: (clients) => set({ clients }),
+
       // ─── Configurações (persistidas no localStorage) ─────────────────────
       config: {
         gumgaToken: '',
@@ -36,10 +65,12 @@ const useStore = create(
           ),
         })),
 
-      updateProductResult: (id, newTitle, newDescription) =>
+      updateProductResult: (id, newTitle, newDescription, titleGenerationId, descGenerationId) =>
         set((s) => ({
           products: s.products.map((p) =>
-            p.id === id ? { ...p, newTitle, newDescription, status: 'processed' } : p
+            p.id === id
+              ? { ...p, newTitle, newDescription, titleGenerationId, descGenerationId, status: 'processed' }
+              : p
           ),
         })),
 
@@ -127,6 +158,11 @@ const useStore = create(
         set((s) => ({ ui: { ...s.ui, selectedIds: [] } })),
 
       addToast: (type, message) => {
+        const currentToasts = get().ui.toasts
+        // Impedir mensagens de toast idênticas duplicadas
+        if (currentToasts.some((t) => t.message === message)) {
+          return
+        }
         const id = Math.random().toString(36).slice(2)
         set((s) => ({
           ui: { ...s.ui, toasts: [...s.ui.toasts, { id, type, message }] },
@@ -141,7 +177,11 @@ const useStore = create(
     }),
     {
       name: STORAGE_KEY,
-      partialize: (s) => ({ config: s.config, logs: s.logs }),
+      partialize: (s) => ({
+        config: s.config,
+        logs: s.logs,
+        activeClient: s.activeClient ? { id: s.activeClient.id, name: s.activeClient.name, slug: s.activeClient.slug } : null,
+      }),
     }
   )
 )

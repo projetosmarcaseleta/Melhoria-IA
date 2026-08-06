@@ -1,18 +1,38 @@
 import axios from 'axios'
+import useStore from '../store/useStore'
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+function getAuthHeaders() {
+  const session = useStore.getState().auth.session
+  if (!session?.access_token) {
+    throw new Error('Usuário não autenticado.')
+  }
+  return { Authorization: `Bearer ${session.access_token}` }
+}
 
 /**
  * Envia PATCH ao AnyMarket via backend Express → n8n webhook.
- * A URL do webhook é definida no .env do servidor.
+ * `clientId`: ID do cliente ativo no Firestore
+ * `generationIds`: IDs das gerações a marcar como 'appliedAt'
  */
-export async function patchProduct(productId, title, description, gumgaToken) {
-  if (!gumgaToken) {
-    throw new Error('Token AnyMarket (gumgaToken) não configurado.')
-  }
+export async function patchProduct(productId, title, description, gumgaToken, generationIds = []) {
+  const activeClient = useStore.getState().activeClient
 
   await axios.post(
-    '/edit/api/anymarket/patch',
-    { productId, title, description, gumgaToken },
-    { timeout: 60_000 }
+    `${API_BASE}/api/anymarket/patch`,
+    {
+      productId,
+      title,
+      description,
+      gumgaToken,
+      clientId: activeClient?.id,
+      generationIds,
+    },
+    {
+      timeout: 60_000,
+      headers: getAuthHeaders(),
+    }
   )
 }
 
