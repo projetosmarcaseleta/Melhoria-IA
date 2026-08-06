@@ -37,23 +37,25 @@ jobs:
           target: "/var/www/melhoria-ia"
           rm: false
 
-      - name: Execute Remote SSH Commands (Restart PM2)
+      - name: Execute Remote SSH Commands (Sync Folders & Restart PM2)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            # Entra no diretório alvo da VPS
+            cd /var/www/melhoria-ia
+            
+            # Se os arquivos estiverem dentro da subpasta "MELHORIA DE DESCRICAO", copia tudo para a raiz /var/www/melhoria-ia
             if [ -d "/var/www/melhoria-ia/MELHORIA DE DESCRICAO" ]; then
-              cd "/var/www/melhoria-ia/MELHORIA DE DESCRICAO"
-            else
-              cd "/var/www/melhoria-ia"
+              cp -rf "/var/www/melhoria-ia/MELHORIA DE DESCRICAO/"* /var/www/melhoria-ia/ 2>/dev/null || true
             fi
             
-            # Instala dependências do backend se package.json existir
-            if [ -f "package.json" ]; then
-              npm install --production
-            fi
+            # Instala dependências do servidor
+            npm install --production
             
-            # Reinicia o backend pelo PM2
+            # Reinicia o servidor Node/Express via PM2
             pm2 restart melhoria-ia || pm2 start server/index.js --name melhoria-ia
+            
+            echo "✅ Deploy concluído na VPS!"
