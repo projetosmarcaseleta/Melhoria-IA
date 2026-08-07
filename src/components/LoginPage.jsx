@@ -1,5 +1,11 @@
-import { useState } from 'react'
-import { signInWithEmailAndPassword, signInWithPopup, signOut, OAuthProvider } from 'firebase/auth'
+import { useState, useEffect } from 'react'
+import {
+  signInWithEmailAndPassword,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+  OAuthProvider,
+} from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../services/firebaseClient'
 import useStore from '../store/useStore'
@@ -11,6 +17,57 @@ export default function LoginPage() {
   const [msLoading, setMsLoading] = useState(false)
   const [error, setError] = useState('')
   const setAuth = useStore((s) => s.setAuth)
+
+  // signInWithPopup depende de monitorar a janela do popup (window.closed /
+  // postMessage), o que o Cross-Origin-Opener-Policy das páginas de login da
+  // Microsoft/Google bloqueia no Chrome. signInWithRedirect não depende disso.
+  useEffect(() => {
+    let cancelled = false
+
+    const finishMicrosoftLogin = async () => {
+      try {
+        const result = await getRedirectResult(auth)
+        if (!result || cancelled) return
+
+        setMsLoading(true)
+        const user = result.user
+
+        const opDoc = await getDoc(doc(db, 'operators', user.uid))
+        if (!opDoc.exists()) {
+          await signOut(auth)
+          setError('Conta Microsoft não autorizada. Solicite acesso a um administrador.')
+          return
+        }
+
+        const operatorData = opDoc.data()
+        const token = await user.getIdToken()
+
+        setAuth(
+          {
+            id: user.uid,
+            email: user.email,
+            name: operatorData?.name ?? user.displayName ?? user.email,
+            role: operatorData?.role ?? 'editor',
+          },
+          { access_token: token }
+        )
+      } catch (authError) {
+        if (authError.code === 'auth/account-exists-with-different-credential') {
+          setError('Este e-mail já possui login com senha. Use e-mail e senha para entrar.')
+        } else {
+          console.error('[Login/Microsoft]', authError)
+          setError('Erro ao entrar com Microsoft. Tente novamente.')
+        }
+      } finally {
+        if (!cancelled) setMsLoading(false)
+      }
+    }
+
+    finishMicrosoftLogin()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -67,40 +124,12 @@ export default function LoginPage() {
     try {
       const provider = new OAuthProvider('microsoft.com')
       provider.setCustomParameters({ prompt: 'select_account' })
-
-      const result = await signInWithPopup(auth, provider)
-      const user = result.user
-
-      // Só operadores previamente cadastrados no Firestore podem acessar
-      const opDoc = await getDoc(doc(db, 'operators', user.uid))
-      if (!opDoc.exists()) {
-        await signOut(auth)
-        setError('Conta Microsoft não autorizada. Solicite acesso a um administrador.')
-        return
-      }
-
-      const operatorData = opDoc.data()
-      const token = await user.getIdToken()
-
-      setAuth(
-        {
-          id: user.uid,
-          email: user.email,
-          name: operatorData?.name ?? user.displayName ?? user.email,
-          role: operatorData?.role ?? 'editor',
-        },
-        { access_token: token }
-      )
+      // Navega para a Microsoft e volta; o resultado é tratado no useEffect
+      // acima via getRedirectResult, após o reload da página.
+      await signInWithRedirect(auth, provider)
     } catch (authError) {
-      if (authError.code === 'auth/popup-closed-by-user' || authError.code === 'auth/cancelled-popup-request') {
-        // Usuário cancelou o popup — não exibir erro
-      } else if (authError.code === 'auth/account-exists-with-different-credential') {
-        setError('Este e-mail já possui login com senha. Use e-mail e senha para entrar.')
-      } else {
-        console.error('[Login/Microsoft]', authError)
-        setError('Erro ao entrar com Microsoft. Tente novamente.')
-      }
-    } finally {
+      console.error('[Login/Microsoft]', authError)
+      setError('Erro ao entrar com Microsoft. Tente novamente.')
       setMsLoading(false)
     }
   }
