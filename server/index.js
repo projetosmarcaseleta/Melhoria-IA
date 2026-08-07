@@ -54,7 +54,9 @@ app.use('/api/skills', requireAuth, skillsRouter)
 app.use('/api/operators', requireAuth, operatorsRouter)
 
 // Catch-all para SPA Frontend (qualquer rota que não seja /api)
-app.get('*', (req, res, next) => {
+// Express 5 (path-to-regexp v7) não aceita mais '*' como padrão de rota,
+// por isso usamos app.use (sem path) em vez de app.get('*', ...)
+app.use((req, res, next) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
     return next()
   }
