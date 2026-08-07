@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import useStore from '../store/useStore'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_BASE = import.meta.env.VITE_API_URL || ''
 
 // Fallbacks de segurança para garantir que o prompt default NUNCA venha vazio
 const FALLBACK_DEFAULT_PROMPTS = {

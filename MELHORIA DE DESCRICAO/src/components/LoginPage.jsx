@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { signInWithEmailAndPassword } from 'firebase/auth'
+import { signInWithEmailAndPassword, signInWithPopup, signOut, OAuthProvider } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../services/firebaseClient'
 import useStore from '../store/useStore'
@@ -8,6 +8,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [msLoading, setMsLoading] = useState(false)
   const [error, setError] = useState('')
   const setAuth = useStore((s) => s.setAuth)
 
@@ -56,6 +57,51 @@ export default function LoginPage() {
       setError(msg)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleMicrosoftLogin = async () => {
+    setError('')
+    setMsLoading(true)
+
+    try {
+      const provider = new OAuthProvider('microsoft.com')
+      provider.setCustomParameters({ prompt: 'select_account' })
+
+      const result = await signInWithPopup(auth, provider)
+      const user = result.user
+
+      // Só operadores previamente cadastrados no Firestore podem acessar
+      const opDoc = await getDoc(doc(db, 'operators', user.uid))
+      if (!opDoc.exists()) {
+        await signOut(auth)
+        setError('Conta Microsoft não autorizada. Solicite acesso a um administrador.')
+        return
+      }
+
+      const operatorData = opDoc.data()
+      const token = await user.getIdToken()
+
+      setAuth(
+        {
+          id: user.uid,
+          email: user.email,
+          name: operatorData?.name ?? user.displayName ?? user.email,
+          role: operatorData?.role ?? 'editor',
+        },
+        { access_token: token }
+      )
+    } catch (authError) {
+      if (authError.code === 'auth/popup-closed-by-user' || authError.code === 'auth/cancelled-popup-request') {
+        // Usuário cancelou o popup — não exibir erro
+      } else if (authError.code === 'auth/account-exists-with-different-credential') {
+        setError('Este e-mail já possui login com senha. Use e-mail e senha para entrar.')
+      } else {
+        console.error('[Login/Microsoft]', authError)
+        setError('Erro ao entrar com Microsoft. Tente novamente.')
+      }
+    } finally {
+      setMsLoading(false)
     }
   }
 
@@ -134,6 +180,36 @@ export default function LoginPage() {
             )}
           </button>
         </form>
+
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-px bg-slate-800" />
+          <span className="text-[11px] text-slate-500 font-medium">ou</span>
+          <div className="flex-1 h-px bg-slate-800" />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleMicrosoftLogin}
+          disabled={loading || msLoading}
+          className="w-full py-3 px-4 rounded-xl text-xs font-extrabold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {msLoading ? (
+            <>
+              <span className="login-spinner" />
+              <span>Autenticando...</span>
+            </>
+          ) : (
+            <>
+              <svg width="16" height="16" viewBox="0 0 21 21" aria-hidden="true">
+                <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+                <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+                <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+                <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+              </svg>
+              <span>Entrar com Microsoft</span>
+            </>
+          )}
+        </button>
 
         <div className="text-center pt-2 border-t border-slate-800">
           <p className="text-[11px] text-slate-400">
