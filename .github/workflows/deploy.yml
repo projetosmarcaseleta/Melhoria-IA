@@ -20,9 +20,6 @@ jobs:
 
       - name: Install and Build Frontend
         run: |
-          if [ -d "MELHORIA DE DESCRICAO" ]; then
-            cd "MELHORIA DE DESCRICAO"
-          fi
           npm install
           npm run build
 
@@ -46,9 +43,6 @@ jobs:
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             cd /var/www/melhoria-ia
-            if [ -d "MELHORIA DE DESCRICAO" ]; then
-              cp -rf "MELHORIA DE DESCRICAO/"* ./ 2>/dev/null || true
-            fi
             npm install --production
             pm2 restart melhoria-ia || pm2 start server/index.js --name melhoria-ia
             echo "✅ Deploy finalizado com sucesso na VPS!"
