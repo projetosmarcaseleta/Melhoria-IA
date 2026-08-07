@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 
 const firebaseConfig = {
@@ -20,3 +20,11 @@ if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
 const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
 export const db = getFirestore(app)
+
+// Força persistência via localStorage em vez do IndexedDB padrão do SDK.
+// O IndexedDB pode falhar com "Database is closing/hidden" bem no instante
+// em que a aba volta do redirect do login (signInWithRedirect), travando o
+// login indefinidamente em alguns navegadores/timings.
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.error('[Firebase] Falha ao definir persistência:', err)
+})
