@@ -38,28 +38,41 @@ router.post('/:clientId', async (req, res, next) => {
       return res.status(400).json({ error: 'Nenhum conteúdo válido encontrado no arquivo.' })
     }
 
-    // 3. Gerar embeddings e gravar chunks em batch
+    // 3. Gerar embeddings e gravar chunks em mini-batches de 400 (limite Firestore = 500 ops/batch)
+    const BATCH_SIZE = 400
     const chunksCollection = db.collection('clients').doc(clientId).collection('knowledge_chunks')
-    const batch = db.batch()
     let chunkCount = 0
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkText = chunks[i]
-      const embedding = await generateEmbedding(chunkText)
+    for (let batchStart = 0; batchStart < chunks.length; batchStart += BATCH_SIZE) {
+      const batchChunks = chunks.slice(batchStart, batchStart + BATCH_SIZE)
+      const batch = db.batch()
 
-      const chunkRef = chunksCollection.doc()
-      batch.set(chunkRef, {
-        docId,
-        filename,
-        chunkIndex: i,
-        content: chunkText,
-        embedding,
-        createdAt: FieldValue.serverTimestamp(),
-      })
-      chunkCount++
+      for (let i = 0; i < batchChunks.length; i++) {
+        const chunkText = batchChunks[i]
+        let embedding
+
+        try {
+          embedding = await generateEmbedding(chunkText)
+        } catch (embErr) {
+          console.error(`[Knowledge] Erro ao gerar embedding do chunk ${batchStart + i}:`, embErr.message)
+          throw new Error(`Falha ao gerar embedding via OpenAI (chunk ${batchStart + i}): ${embErr.message}`)
+        }
+
+        const chunkRef = chunksCollection.doc()
+        batch.set(chunkRef, {
+          docId,
+          filename,
+          chunkIndex: batchStart + i,
+          content: chunkText,
+          embedding,
+          createdAt: FieldValue.serverTimestamp(),
+        })
+        chunkCount++
+      }
+
+      await batch.commit()
+      console.log(`[Knowledge] Mini-batch ${Math.floor(batchStart / BATCH_SIZE) + 1} commitado: ${chunkCount} chunks gravados até agora.`)
     }
-
-    await batch.commit()
 
     // Atualizar documento com contagem de chunks
     await docRef.update({ chunkCount })

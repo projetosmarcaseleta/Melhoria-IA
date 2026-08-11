@@ -67,7 +67,7 @@ router.get('/:clientId', async (req, res, next) => {
  * PUT /api/skills/:clientId/:skillId
  * Ativa/Desativa ou atualiza configurações de uma skill para o cliente.
  */
-router.put('/:clientId/:skillId', requireAdmin, async (req, res, next) => {
+router.put('/:clientId/:skillId', async (req, res, next) => {
   try {
     const { clientId, skillId } = req.params
     const { isActive, config } = req.body ?? {}

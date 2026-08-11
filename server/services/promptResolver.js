@@ -123,12 +123,19 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     console.warn('[PromptResolver] Aviso ao buscar skills:', err.message)
   }
 
-  // 5. Compilar prompt final
-  let fullPrompt = promptData.content
+  // 5. Compilar prompt final — RAG tem prioridade sobre prompt padrão
+  let fullPrompt
 
-  // Injetar RAG
   if (ragContextText) {
-    fullPrompt += `\n\n${ragContextText}`
+    // RAG-first: a base de conhecimento SUBSTITUI o prompt padrão como corpo principal.
+    // As instruções do prompt padrão são mantidas como regras complementares de formatação/SEO.
+    fullPrompt = `${ragContextText}
+
+INSTRUÇÕES DE GERAÇÃO E FORMATAÇÃO:
+${promptData.content}`
+  } else {
+    // Sem RAG: usa prompt padrão normalmente
+    fullPrompt = promptData.content
   }
 
   // Injetar few-shot
