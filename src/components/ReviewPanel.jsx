@@ -60,6 +60,7 @@ export default function ReviewPanel() {
   const setApplying          = useStore((s) => s.setApplying)
   const setProgress          = useStore((s) => s.setProgress)
   const setTab               = useStore((s) => s.setTab)
+  const removeProducts       = useStore((s) => s.removeProducts)
 
   const [selected, setSelected]       = useState([])
   const [fieldSel, setFieldSel]       = useState({})
@@ -192,7 +193,13 @@ export default function ReviewPanel() {
     }
 
     setFeedbackState((prev) => ({ ...prev, ...updatedMap }))
-    addToast('success', `${targets.length} produto(s) aprovado(s)! A IA usará esses exemplos no aprendizado futuro.`)
+
+    // Remover os produtos aprovados da lista de revisão
+    const approvedIds = targets.map((p) => p.id)
+    removeProducts(approvedIds)
+    setSelected((prev) => prev.filter((id) => !approvedIds.includes(id)))
+
+    addToast('success', `${targets.length} produto(s) aprovado(s) e removido(s) da lista! A IA usará esses exemplos no aprendizado futuro.`)
   }
 
   const handleRedoSingle = async (product) => {
@@ -435,6 +442,29 @@ export default function ReviewPanel() {
             >
               <span>📥 Exportar Planilha</span>
             </button>
+
+            {/* Limpar Aprovados */}
+            {feedbackState && Object.values(feedbackState).some((v) => v === 'approved') && (
+              <button
+                onClick={() => {
+                  const approvedIds = reviewable
+                    .filter((p) => {
+                      const tf = p.titleGenerationId ? feedbackState[p.titleGenerationId] : null
+                      const df = p.descGenerationId ? feedbackState[p.descGenerationId] : null
+                      return tf === 'approved' || df === 'approved'
+                    })
+                    .map((p) => p.id)
+                  if (approvedIds.length) {
+                    removeProducts(approvedIds)
+                    setSelected((prev) => prev.filter((id) => !approvedIds.includes(id)))
+                    addToast('success', `${approvedIds.length} produto(s) aprovado(s) removido(s) da lista.`)
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-900/40 hover:bg-emerald-800/60 border border-emerald-700/50 text-emerald-300 transition-all flex items-center gap-1.5"
+              >
+                <span>🧹 Limpar Aprovados</span>
+              </button>
+            )}
 
             {/* Refazer IA */}
             <button

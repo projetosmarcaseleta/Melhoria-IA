@@ -84,6 +84,12 @@ const useStore = create(
 
       clearProducts: () => set({ products: [] }),
 
+      // Remove produtos específicos da lista pelo ID (ex: após aprovação)
+      removeProducts: (ids) =>
+        set((s) => ({
+          products: s.products.filter((p) => !ids.includes(p.id)),
+        })),
+
       // ─── Logs de alterações ───────────────────────────────────────────────
       // [{logId, productId, productTitle, timestamp, status, changes:[{field,before,after}]}]
       // status: 'applied' | 'undone' | 'error'
