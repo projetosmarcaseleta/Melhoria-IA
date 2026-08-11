@@ -38,40 +38,34 @@ router.post('/:clientId', async (req, res, next) => {
       return res.status(400).json({ error: 'Nenhum conteúdo válido encontrado no arquivo.' })
     }
 
-    // 3. Gerar embeddings e gravar chunks em mini-batches de 400 (limite Firestore = 500 ops/batch)
-    const BATCH_SIZE = 400
+    // 3. Gerar embeddings e gravar cada chunk individualmente
+    // ⚠️ Embeddings (1536 floats ~12KB cada) estouravam o limite de tamanho do batch Firestore (10MB).
+    // Solução: gravar cada chunk com doc.set() independente, sem batch.
     const chunksCollection = db.collection('clients').doc(clientId).collection('knowledge_chunks')
     let chunkCount = 0
 
-    for (let batchStart = 0; batchStart < chunks.length; batchStart += BATCH_SIZE) {
-      const batchChunks = chunks.slice(batchStart, batchStart + BATCH_SIZE)
-      const batch = db.batch()
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkText = chunks[i]
+      let embedding
 
-      for (let i = 0; i < batchChunks.length; i++) {
-        const chunkText = batchChunks[i]
-        let embedding
-
-        try {
-          embedding = await generateEmbedding(chunkText)
-        } catch (embErr) {
-          console.error(`[Knowledge] Erro ao gerar embedding do chunk ${batchStart + i}:`, embErr.message)
-          throw new Error(`Falha ao gerar embedding via OpenAI (chunk ${batchStart + i}): ${embErr.message}`)
-        }
-
-        const chunkRef = chunksCollection.doc()
-        batch.set(chunkRef, {
-          docId,
-          filename,
-          chunkIndex: batchStart + i,
-          content: chunkText,
-          embedding,
-          createdAt: FieldValue.serverTimestamp(),
-        })
-        chunkCount++
+      try {
+        embedding = await generateEmbedding(chunkText)
+      } catch (embErr) {
+        console.error(`[Knowledge] Erro ao gerar embedding do chunk ${i}:`, embErr.message)
+        throw new Error(`Falha ao gerar embedding via OpenAI (chunk ${i}): ${embErr.message}`)
       }
 
-      await batch.commit()
-      console.log(`[Knowledge] Mini-batch ${Math.floor(batchStart / BATCH_SIZE) + 1} commitado: ${chunkCount} chunks gravados até agora.`)
+      await chunksCollection.doc().set({
+        docId,
+        filename,
+        chunkIndex: i,
+        content: chunkText,
+        embedding,
+        createdAt: FieldValue.serverTimestamp(),
+      })
+
+      chunkCount++
+      console.log(`[Knowledge] Chunk ${i + 1}/${chunks.length} gravado.`)
     }
 
     // Atualizar documento com contagem de chunks
