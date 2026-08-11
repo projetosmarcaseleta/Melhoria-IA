@@ -1,5 +1,4 @@
 import { db } from './firebaseAdmin.js'
-import { generateEmbedding, findTopKSimilarChunks } from './ragService.js'
 
 /**
  * Resolve o prompt final para um cliente + tipo de geração no Firestore.
@@ -40,39 +39,35 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     promptData = getHardcodedDefaultPrompt(promptType)
   }
 
-  // 2. RAG — Buscar contexto relevante da base de conhecimento do cliente (.md)
+  // 2. RAG — Incluir TODA a base de conhecimento do cliente (.md)
+  // ⚠️ Estratégia alterada: incluir todos os chunks em ordem (chunkIndex), não apenas os top-K similares.
+  // Motivo: blocos fixos (ex: texto institucional "sempre primeiro") não são semanticamente similares
+  // a nenhum produto específico e seriam descartados pelo filtro de cosseno — mas DEVEM sempre aparecer.
   let ragChunksUsed = []
   let ragContextText = ''
 
-  if (productData && (productData.title || productData.description)) {
-    try {
-      // Buscar chunks gravados na subcoleção do cliente ou coleção global
-      const chunksSnapshot = await db
-        .collection('clients')
-        .doc(clientId)
-        .collection('knowledge_chunks')
-        .get()
+  try {
+    const chunksSnapshot = await db
+      .collection('clients')
+      .doc(clientId)
+      .collection('knowledge_chunks')
+      .orderBy('chunkIndex')
+      .get()
 
-      if (!chunksSnapshot.empty) {
-        const queryText = `${productData.title ?? ''} ${productData.description ?? ''} ${productData.characteristics ?? ''}`.trim()
-        const queryEmbedding = await generateEmbedding(queryText)
+    if (!chunksSnapshot.empty) {
+      const allChunks = chunksSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
 
-        const allChunks = chunksSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }))
+      ragChunksUsed = allChunks.map((c) => c.id)
+      const chunksContent = allChunks.map((c) => c.content).join('\n---\n')
+      ragContextText = `BASE DE CONHECIMENTO E REGRAS DO CLIENTE (SEGUIR RIGOROSAMENTE — INCLUINDO BLOCOS FIXOS):\n---\n${chunksContent}\n---`
 
-        const topChunks = findTopKSimilarChunks(queryEmbedding, allChunks, 3, 0.25)
-
-        if (topChunks.length > 0) {
-          ragChunksUsed = topChunks.map((c) => c.id)
-          const chunksContent = topChunks.map((c) => c.content).join('\n---\n')
-          ragContextText = `BASE DE CONHECIMENTO E REGRAS DO CLIENTE:\n---\n${chunksContent}\n---`
-        }
-      }
-    } catch (err) {
-      console.warn('[PromptResolver] Aviso ao recuperar contexto RAG:', err.message)
+      console.log(`[PromptResolver] RAG: ${allChunks.length} chunks incluídos no prompt para cliente ${clientId}.`)
     }
+  } catch (err) {
+    console.warn('[PromptResolver] Aviso ao recuperar contexto RAG:', err.message)
   }
 
   // 3. Buscar few-shot examples (gerações aprovadas recentes do cliente)
