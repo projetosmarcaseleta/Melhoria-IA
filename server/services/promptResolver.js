@@ -39,10 +39,40 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     promptData = getHardcodedDefaultPrompt(promptType)
   }
 
-  // 2. RAG — Incluir TODA a base de conhecimento do cliente (.md)
-  // ⚠️ Estratégia alterada: incluir todos os chunks em ordem (chunkIndex), não apenas os top-K similares.
-  // Motivo: blocos fixos (ex: texto institucional "sempre primeiro") não são semanticamente similares
-  // a nenhum produto específico e seriam descartados pelo filtro de cosseno — mas DEVEM sempre aparecer.
+  // 2. Regras Estruturadas Aprovadas do Cliente (knowledge_rules)
+  const approvedRules = []
+  let structuredRulesText = ''
+
+  try {
+    const rulesSnapshot = await db
+      .collection('clients')
+      .doc(clientId)
+      .collection('knowledge_rules')
+      .where('status', '==', 'approved')
+      .get()
+
+    if (!rulesSnapshot.empty) {
+      rulesSnapshot.docs.forEach((doc) => {
+        const r = { id: doc.id, ...doc.data() }
+        // Filtrar por escopo (titulo, descricao ou ambos)
+        const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+        if (matchesScope) {
+          approvedRules.push(r)
+        }
+      })
+
+      if (approvedRules.length > 0) {
+        const rulesFormatted = approvedRules
+          .map((r, i) => `[Regra ${i + 1} - ${r.type.toUpperCase()}] (${r.name}): ${r.content || r.description}`)
+          .join('\n')
+        structuredRulesText = `REGRAS E POLÍTICAS ESTRUTURADAS APROVADAS DO CLIENTE (SEGUIR RIGOROSAMENTE):\n---\n${rulesFormatted}\n---`
+      }
+    }
+  } catch (err) {
+    console.warn('[PromptResolver] Aviso ao carregar regras estruturadas:', err.message)
+  }
+
+  // 3. RAG — Incluir contexto da base de conhecimento do cliente (.md)
   let ragChunksUsed = []
   let ragContextText = ''
 
@@ -62,15 +92,13 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
 
       ragChunksUsed = allChunks.map((c) => c.id)
       const chunksContent = allChunks.map((c) => c.content).join('\n---\n')
-      ragContextText = `BASE DE CONHECIMENTO E REGRAS DO CLIENTE (SEGUIR RIGOROSAMENTE — INCLUINDO BLOCOS FIXOS):\n---\n${chunksContent}\n---`
-
-      console.log(`[PromptResolver] RAG: ${allChunks.length} chunks incluídos no prompt para cliente ${clientId}.`)
+      ragContextText = `BASE DE CONHECIMENTO E REGRAS DO CLIENTE:\n---\n${chunksContent}\n---`
     }
   } catch (err) {
     console.warn('[PromptResolver] Aviso ao recuperar contexto RAG:', err.message)
   }
 
-  // 3. Buscar few-shot examples (gerações aprovadas recentes do cliente)
+  // 4. Buscar few-shot examples (gerações aprovadas recentes do cliente)
   let fewShotExamples = []
   try {
     const fewShotSnapshot = await db
@@ -86,7 +114,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     console.warn('[PromptResolver] Aviso ao buscar few-shots:', err.message)
   }
 
-  // 4. Buscar skills ativas do cliente
+  // 5. Buscar skills ativas do cliente
   const skillsApplied = []
   let activeSkillsInstructions = []
 
@@ -118,19 +146,23 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     console.warn('[PromptResolver] Aviso ao buscar skills:', err.message)
   }
 
-  // 5. Compilar prompt final — RAG tem prioridade sobre prompt padrão
-  let fullPrompt
+  // 6. Compilar prompt final — RAG + Regras Estruturadas
+  let fullPrompt = ''
+
+  if (structuredRulesText) {
+    fullPrompt += `${structuredRulesText}\n\n`
+  }
 
   if (ragContextText) {
-    // RAG-first: a base de conhecimento SUBSTITUI o prompt padrão como corpo principal.
-    // As instruções do prompt padrão são mantidas como regras complementares de formatação/SEO.
-    fullPrompt = `${ragContextText}
+    fullPrompt += `${ragContextText}\n\n`
+  }
 
-INSTRUÇÕES DE GERAÇÃO E FORMATAÇÃO:
-${promptData.content}`
-  } else {
-    // Sem RAG: usa prompt padrão normalmente
-    fullPrompt = promptData.content
+  fullPrompt += `INSTRUÇÕES DE GERAÇÃO E FORMATAÇÃO:\n${promptData.content}`
+
+  // Nota importante: Se houver blocos fixos determinísticos (prepend_exactly), instruir o LLM a focar no bloco técnico
+  const hasPrependRules = approvedRules.some((r) => r.application === 'prepend_exactly')
+  if (hasPrependRules) {
+    fullPrompt += `\n\nATENÇÃO: O texto institucional fixo será inserido automaticamente pelo sistema. Gere APENAS o bloco técnico do produto solicitado (introdução + especificações/recursos).`
   }
 
   // Injetar few-shot
@@ -157,7 +189,9 @@ ${promptData.content}`
     fewShotExamples,
     skillsApplied,
     ragChunksUsed,
+    approvedRules,
   }
+
 }
 
 /** Prompts globais de fallback */

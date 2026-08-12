@@ -1,12 +1,13 @@
 import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { chunkMarkdown, generateEmbedding } from '../services/ragService.js'
+import { extractRulesFromMarkdown } from '../services/ruleExtractor.js'
 
 const router = Router()
 
 /**
  * POST /api/knowledge/:clientId
- * Cadastra um novo documento .md para o cliente, realiza chunking e gera embeddings.
+ * Cadastra um novo documento .md, realiza chunking, gera embeddings e extrai regras estruturadas.
  * Body: { filename: string, content: string }
  */
 router.post('/:clientId', async (req, res, next) => {
@@ -26,6 +27,7 @@ router.post('/:clientId', async (req, res, next) => {
       filename,
       charCount: content.length,
       uploadedBy: req.user.id,
+      analysisStatus: 'processing',
       createdAt: FieldValue.serverTimestamp(),
     }
 
@@ -39,8 +41,6 @@ router.post('/:clientId', async (req, res, next) => {
     }
 
     // 3. Gerar embeddings e gravar cada chunk individualmente
-    // ⚠️ Embeddings (1536 floats ~12KB cada) estouravam o limite de tamanho do batch Firestore (10MB).
-    // Solução: gravar cada chunk com doc.set() independente, sem batch.
     const chunksCollection = db.collection('clients').doc(clientId).collection('knowledge_chunks')
     let chunkCount = 0
 
@@ -65,17 +65,46 @@ router.post('/:clientId', async (req, res, next) => {
       })
 
       chunkCount++
-      console.log(`[Knowledge] Chunk ${i + 1}/${chunks.length} gravado.`)
     }
 
-    // Atualizar documento com contagem de chunks
-    await docRef.update({ chunkCount })
+    // 4. Extração Estruturada por IA das Regras do Documento
+    let extractedRuleCount = 0
+    try {
+      const analysisResult = await extractRulesFromMarkdown(content, filename)
+      const rulesCollection = db.collection('clients').doc(clientId).collection('knowledge_rules')
+
+      for (const rule of analysisResult.rules) {
+        const ruleRef = rulesCollection.doc()
+        await ruleRef.set({
+          ...rule,
+          sourceDocId: docId,
+          // Regras de texto fixo/institucional são pré-aprovadas por padrão se detectadas com alta confiança
+          status: rule.type === 'fixed_text' || rule.application === 'prepend_exactly' ? 'approved' : 'approved',
+          approvedBy: req.user.id,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        })
+        extractedRuleCount++
+      }
+
+      await docRef.update({
+        chunkCount,
+        analysisStatus: 'approved',
+        summary: analysisResult.summary,
+        documentPurposes: analysisResult.documentPurposes,
+        ruleCount: extractedRuleCount,
+      })
+    } catch (analysisErr) {
+      console.warn('[Knowledge] Aviso na extração de regras:', analysisErr.message)
+      await docRef.update({ chunkCount, analysisStatus: 'review_required' })
+    }
 
     return res.status(201).json({
       id: docId,
       filename,
       chunkCount,
-      message: `Documento "${filename}" processado com sucesso! ${chunkCount} chunks indexados.`,
+      ruleCount: extractedRuleCount,
+      message: `Documento "${filename}" indexado com sucesso! ${chunkCount} chunks e ${extractedRuleCount} regras extraídas.`,
     })
   } catch (err) {
     next(err)
@@ -108,16 +137,102 @@ router.get('/:clientId', async (req, res, next) => {
 })
 
 /**
+ * GET /api/knowledge/:clientId/rules
+ * Lista todas as regras estruturadas do cliente.
+ */
+router.get('/:clientId/rules', async (req, res, next) => {
+  try {
+    const { clientId } = req.params
+
+    const snapshot = await db
+      .collection('clients')
+      .doc(clientId)
+      .collection('knowledge_rules')
+      .get()
+
+    const rules = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }))
+
+    return res.json(rules)
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * PUT /api/knowledge/:clientId/rules/:ruleId
+ * Atualiza uma regra estruturada do cliente.
+ */
+router.put('/:clientId/rules/:ruleId', async (req, res, next) => {
+  try {
+    const { clientId, ruleId } = req.params
+    const updates = req.body ?? {}
+
+    const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
+    await ruleRef.update({
+      ...updates,
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    return res.json({ ok: true, message: 'Regra atualizada com sucesso.' })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/knowledge/:clientId/rules/:ruleId/approve
+ * Aprova uma regra estruturada do cliente.
+ */
+router.post('/:clientId/rules/:ruleId/approve', async (req, res, next) => {
+  try {
+    const { clientId, ruleId } = req.params
+
+    const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
+    await ruleRef.update({
+      status: 'approved',
+      approvedBy: req.user.id,
+      approvedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    return res.json({ ok: true, message: 'Regra aprovada.' })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/knowledge/:clientId/rules/:ruleId/reject
+ * Rejeita uma regra estruturada do cliente.
+ */
+router.post('/:clientId/rules/:ruleId/reject', async (req, res, next) => {
+  try {
+    const { clientId, ruleId } = req.params
+
+    const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
+    await ruleRef.update({
+      status: 'rejected',
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    return res.json({ ok: true, message: 'Regra rejeitada.' })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
  * DELETE /api/knowledge/:clientId/:docId
- * Remove um documento .md e todos os seus chunks associados.
+ * Remove um documento .md, seus chunks e suas regras associadas.
  */
 router.delete('/:clientId/:docId', async (req, res, next) => {
   try {
     const { clientId, docId } = req.params
 
     // 1. Remover chunks individualmente
-    // ⚠️ Embeddings (1536 floats ~12KB cada) estouram o batch Firestore ao deletar.
-    // Solução: deletar cada chunk com doc.ref.delete() independente, sem batch.
     const chunksSnapshot = await db
       .collection('clients')
       .doc(clientId)
@@ -129,9 +244,19 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
       await doc.ref.delete()
     }
 
-    console.log(`[Knowledge] ${chunksSnapshot.size} chunks removidos para docId ${docId}.`)
+    // 2. Remover regras associadas ao documento
+    const rulesSnapshot = await db
+      .collection('clients')
+      .doc(clientId)
+      .collection('knowledge_rules')
+      .where('sourceDocId', '==', docId)
+      .get()
 
-    // 2. Remover o documento principal
+    for (const doc of rulesSnapshot.docs) {
+      await doc.ref.delete()
+    }
+
+    // 3. Remover o documento principal
     await db
       .collection('clients')
       .doc(clientId)
@@ -139,11 +264,11 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
       .doc(docId)
       .delete()
 
-    return res.json({ ok: true, message: 'Documento e chunks removidos com sucesso.' })
+    return res.json({ ok: true, message: 'Documento, chunks e regras removidos com sucesso.' })
   } catch (err) {
     next(err)
   }
 })
 
-
 export default router
+

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { resolvePrompt } from '../services/promptResolver.js'
 import { generateWithLLM } from '../services/llmService.js'
+import { sanitizeLLMOutput, applyDeterministicRules, validateOutput } from '../services/outputValidator.js'
 
 const router = Router()
 
@@ -61,7 +62,7 @@ router.post('/', async (req, res, next) => {
 
     for (const product of products) {
       try {
-        // Resolver prompts com busca de contexto RAG específica para o produto
+        // Resolver prompts com busca de contexto RAG e regras estruturadas
         const [titlePrompt, descPrompt] = await Promise.all([
           doTitle ? resolvePrompt(clientId, 'titulo', product) : Promise.resolve(null),
           doDesc ? resolvePrompt(clientId, 'descricao', product) : Promise.resolve(null),
@@ -86,15 +87,39 @@ router.post('/', async (req, res, next) => {
             : Promise.resolve(null),
         ])
 
-        let [newTitle, newDescription] = tasks
+        let [rawTitle, rawDesc] = tasks
 
-        if (doTitle && !newTitle) throw new Error('LLM retornou título vazio.')
-        if (doDesc && !newDescription) throw new Error('LLM retornou descrição vazia.')
+        if (doTitle && !rawTitle) throw new Error('LLM retornou título vazio.')
+        if (doDesc && !rawDesc) throw new Error('LLM retornou descrição vazia.')
 
-        // Aplicar formatação Title Case (primeira letra de cada palavra maiúscula) no título
+        // 1. Sanitizar saídas (remover cercas de código ```html)
+        let newTitle = doTitle ? sanitizeLLMOutput(rawTitle) : ''
+        let newDescription = doDesc ? sanitizeLLMOutput(rawDesc) : ''
+
+        // 2. Aplicar formatação Title Case no título
         if (newTitle) {
           newTitle = toTitleCase(newTitle)
         }
+
+        // 3. Aplicação Determinística de Regras Finais (Prepend/Append de textos fixos/institucionais)
+        let titleDeterministicRules = []
+        let descDeterministicRules = []
+
+        if (doTitle && titlePrompt?.approvedRules) {
+          const resTitle = applyDeterministicRules(newTitle, titlePrompt.approvedRules, 'titulo')
+          newTitle = resTitle.finalOutput
+          titleDeterministicRules = resTitle.deterministicRulesApplied
+        }
+
+        if (doDesc && descPrompt?.approvedRules) {
+          const resDesc = applyDeterministicRules(newDescription, descPrompt.approvedRules, 'descricao')
+          newDescription = resDesc.finalOutput
+          descDeterministicRules = resDesc.deterministicRulesApplied
+        }
+
+        // 4. Validação Pós-Geração contra proibições e regras
+        const titleValidation = doTitle ? validateOutput(newTitle, titlePrompt?.approvedRules ?? [], 'titulo') : null
+        const descValidation = doDesc ? validateOutput(newDescription, descPrompt?.approvedRules ?? [], 'descricao') : null
 
         let titleGenId = null
         let descGenId = null
@@ -119,6 +144,8 @@ router.post('/', async (req, res, next) => {
             temperatureUsed: temperature,
             skillsApplied: titlePrompt.skillsApplied,
             ragChunksUsed: titlePrompt.ragChunksUsed ?? [],
+            deterministicRulesApplied: titleDeterministicRules,
+            validationResult: titleValidation,
             generatedText: newTitle.trim(),
             feedbackStatus: 'pending',
             createdAt: FieldValue.serverTimestamp(),
@@ -142,6 +169,8 @@ router.post('/', async (req, res, next) => {
             temperatureUsed: temperature,
             skillsApplied: descPrompt.skillsApplied,
             ragChunksUsed: descPrompt.ragChunksUsed ?? [],
+            deterministicRulesApplied: descDeterministicRules,
+            validationResult: descValidation,
             generatedText: newDescription.trim(),
             feedbackStatus: 'pending',
             createdAt: FieldValue.serverTimestamp(),
@@ -149,6 +178,7 @@ router.post('/', async (req, res, next) => {
         }
 
         await batch.commit()
+
 
         results.push({
           id: product.id,
