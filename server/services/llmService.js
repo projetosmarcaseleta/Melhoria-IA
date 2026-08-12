@@ -3,20 +3,16 @@ import OpenAI from 'openai'
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 /**
- * Aplica variáveis de template no prompt.
- */
-function applyVars(template, { title, description, characteristics }) {
-  return template
-    .replace(/\{\{title\}\}/g, title ?? '')
-    .replace(/\{\{description\}\}/g, description ?? '')
-    .replace(/\{\{characteristics\}\}/g, characteristics ?? '')
-}
-
-/**
  * Gera conteúdo usando o LLM.
  *
+ * O systemPrompt já vem totalmente resolvido pelo promptResolver
+ * (RAG + few-shot + skills + instruções). NÃO fazer parsing ou splitting aqui.
+ *
+ * Os dados do produto são enviados separadamente como mensagem do usuário
+ * para que o LLM tenha clareza sobre o que é instrução vs. o que é input.
+ *
  * @param {object} params
- * @param {string} params.systemPrompt - Prompt completo já resolvido (com few-shot + skills)
+ * @param {string} params.systemPrompt - Prompt completo já resolvido pelo promptResolver
  * @param {object} params.productData  - { title, description, characteristics }
  * @param {string} params.model        - Modelo a usar (ex: 'gpt-4o-mini')
  * @param {number} params.temperature  - Temperatura
@@ -28,35 +24,24 @@ export async function generateWithLLM({
   model = 'gpt-4o-mini',
   temperature = 1,
 }) {
-  // Separar system instructions do bloco de dados do produto
-  const systemPart = systemPrompt
-    .replace(/\n\nDADOS DISPONÍVEIS[\s\S]*$/, '')
-    .replace(/\n\nEXEMPLOS DE RESULTADOS APROVADOS[\s\S]*?(\n\n[A-Z]|$)/, (match, after) => after || '')
-    .trim()
-
-  // Extrair o bloco de dados disponíveis e aplicar variáveis
-  const dataPart = systemPrompt.match(/DADOS DISPONÍVEIS[\s\S]*$/)
-  const userContent = dataPart
-    ? applyVars(dataPart[0], productData)
-    : `Título: ${productData.title ?? ''}\nDescrição: ${productData.description ?? ''}\nCaracterísticas: ${productData.characteristics ?? ''}`
-
-  // Reconstruir system prompt completo (sem o bloco de dados, que vai para o user)
-  // Incluir few-shot e skills que estão no systemPrompt
-  const fewShotMatch = systemPrompt.match(/\n\nEXEMPLOS DE RESULTADOS APROVADOS[\s\S]*?---\n/)
-  const skillsMatch = systemPrompt.match(/\n\nINSTRUÇÃO ADICIONAL[\s\S]*/g)
-
-  let finalSystem = systemPart
-  if (fewShotMatch) finalSystem += fewShotMatch[0]
-  if (skillsMatch) finalSystem += skillsMatch.join('')
+  // Dados do produto como mensagem do usuário — separados das instruções do sistema
+  const userMessage = [
+    productData.title           ? `Título original: ${productData.title}`          : null,
+    productData.description     ? `Descrição original: ${productData.description}` : null,
+    productData.characteristics ? `Características: ${productData.characteristics}`: null,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 
   const response = await client.chat.completions.create({
     model,
     temperature,
     messages: [
-      { role: 'system', content: finalSystem.trim() },
-      { role: 'user', content: userContent },
+      { role: 'system', content: systemPrompt.trim() },
+      { role: 'user',   content: userMessage },
     ],
   })
 
   return response.choices[0].message.content
 }
+
