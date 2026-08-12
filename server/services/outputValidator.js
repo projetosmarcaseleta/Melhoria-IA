@@ -76,20 +76,48 @@ export function applyDeterministicRules(text, rules = [], scope = 'descricao') {
 }
 
 /**
+ * Limites de caracteres por escopo. Espelham o contrato dos prompts padrão
+ * (título: 60 / descrição: 2000) e o contador exibido no ReviewPanel.
+ */
+export const SCOPE_MAX_LENGTH = {
+  titulo: 60,
+  descricao: 2000,
+}
+
+/**
+ * Conta ocorrências de `needle` em `haystack` (comparação literal).
+ */
+function countOccurrences(haystack, needle) {
+  if (!needle) return 0
+  let count = 0
+  let from = 0
+  while (true) {
+    const idx = haystack.indexOf(needle, from)
+    if (idx === -1) break
+    count++
+    from = idx + needle.length
+  }
+  return count
+}
+
+/**
  * Valida o resultado final contra proibições e limites.
  *
  * @param {string} text
  * @param {Array<object>} rules
  * @param {string} scope
- * @returns {{ valid: boolean, violations: Array<{ ruleId?: string, code: string, message: string }> }}
+ * @param {object} [options]
+ * @param {number} [options.maxLength] - Sobrescreve o limite padrão do escopo
+ * @returns {{ valid: boolean, violations: Array<{ ruleId?: string, code: string, severity: string, message: string }> }}
  */
-export function validateOutput(text, rules = [], scope = 'descricao') {
+export function validateOutput(text, rules = [], scope = 'descricao', options = {}) {
   const violations = []
 
   // 1. Checagem contra markdown residual
   if (text.includes('```')) {
     violations.push({
       code: 'MARKDOWN_FENCE_PRESENT',
+      severity: 'error',
       message: 'O texto contém marcadores de código Markdown (```).',
     })
   }
@@ -114,9 +142,48 @@ export function validateOutput(text, rules = [], scope = 'descricao') {
         violations.push({
           ruleId: rule.id,
           code: 'PROHIBITED_TERM',
-          message: `Uso do termo proibido: "${term}" (Regra: ${rule.name || rule.id})`,
+          severity: 'error',
+          message: `Termo proibido em uso: "${term}" (regra: ${rule.name || rule.id})`,
         })
       }
+    }
+  }
+
+  // 3. Limite de caracteres do escopo
+  const maxLength = options.maxLength ?? SCOPE_MAX_LENGTH[scope]
+  if (maxLength && text.length > maxLength) {
+    violations.push({
+      code: 'MAX_LENGTH_EXCEEDED',
+      severity: 'warning',
+      message: `Passou do limite de ${maxLength} caracteres (está com ${text.length}).`,
+    })
+  }
+
+  // 4. Bloco institucional duplicado.
+  // applyDeterministicRules injeta o texto fixo quando não encontra o bloco no
+  // início/fim exato do texto. Se o LLM já tiver reproduzido o bloco literalmente
+  // em outra posição, o resultado sai com o bloco duas vezes — é isso que
+  // detectamos aqui.
+  const fixedTextRules = rules.filter(
+    (r) =>
+      r.status === 'approved' &&
+      (r.scopes?.includes(scope) || r.scopes?.includes('ambos')) &&
+      ['prepend_exactly', 'append_exactly'].includes(r.application) &&
+      r.content
+  )
+
+  for (const rule of fixedTextRules) {
+    // Trecho distintivo do bloco (o início costuma ser único o suficiente)
+    const marker = rule.content.trim().slice(0, 60)
+    if (marker.length < 12) continue // curto demais para ser um marcador confiável
+
+    if (countOccurrences(text, marker) > 1) {
+      violations.push({
+        ruleId: rule.id,
+        code: 'FIXED_TEXT_DUPLICATED',
+        severity: 'warning',
+        message: `O bloco fixo "${rule.name || rule.id}" aparece mais de uma vez no texto.`,
+      })
     }
   }
 

@@ -41,12 +41,12 @@ export default function LogEntry({ log }) {
   const descricao = log.changes.find((c) => c.field === 'DESCRIÇÃO')
 
   const handleUndo = async () => {
-    if (!config.gumgaToken) { addToast('error', 'Configure o token AnyMarket para desfazer.'); return }
+    if (!config.gumgaToken) { addToast('error', 'Configure o token da AnyMarket antes de reverter.'); return }
     try {
       await patchProduct(log.productId, log.originalData.title, log.originalData.description, config.gumgaToken)
       setLogStatus(log.logId, 'undone')
       updateProductStatus(log.productId, 'undone')
-      addToast('success', `Produto ${log.productId} revertido com sucesso.`)
+      addToast('success', 'Pronto! Anúncio revertido.')
     } catch (e) {
       addToast('error', `Erro ao desfazer ${log.productId}: ` + e.message)
     }

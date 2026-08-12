@@ -72,7 +72,18 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     console.warn('[PromptResolver] Aviso ao carregar regras estruturadas:', err.message)
   }
 
-  // 3. RAG — Incluir contexto da base de conhecimento do cliente (.md)
+  // 3. Contexto da base de conhecimento do cliente (.md) — TODOS os chunks, em ordem.
+  //
+  // ATENÇÃO — decisão de arquitetura deliberada, não a "faltar" implementar:
+  // NÃO usar busca por similaridade (top-K / cosseno) aqui. Um documento de
+  // diretrizes de marca é integralmente relevante para todos os produtos, então
+  // um top-K descartaria partes obrigatórias do contexto — na prática, o bloco
+  // institucional caía fora e deixava de ser aplicado. Similaridade serve para
+  // corpus grande e heterogêneo, que não é o caso aqui.
+  //
+  // Por isso `ragService.findTopKSimilarChunks` / `cosineSimilarity` existem mas
+  // não são chamados, e o parâmetro `productData` desta função não é usado para
+  // montar query de embedding.
   let ragChunksUsed = []
   let ragContextText = ''
 
@@ -98,16 +109,34 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     console.warn('[PromptResolver] Aviso ao recuperar contexto RAG:', err.message)
   }
 
-  // 4. Buscar few-shot examples (gerações aprovadas recentes do cliente)
+  // 4. Buscar few-shot examples — as 5 gerações aprovadas/editadas MAIS RECENTES.
+  //
+  // O orderBy('createdAt','desc') é essencial: sem ele o Firestore devolve 5
+  // documentos em ordem de ID, ou seja, sempre os mesmos exemplos antigos —
+  // e o aprendizado evolutivo deixa de evoluir conforme novas aprovações entram.
+  //
+  // A consulta exige um índice composto (clientId + generationType +
+  // feedbackStatus + createdAt). Enquanto ele não existir no projeto, caímos
+  // para a consulta sem ordenação em vez de ficar sem nenhum exemplo.
   let fewShotExamples = []
   try {
-    const fewShotSnapshot = await db
+    const baseQuery = db
       .collection('generations')
       .where('clientId', '==', clientId)
       .where('generationType', '==', promptType)
       .where('feedbackStatus', 'in', ['approved', 'edited'])
-      .limit(5)
-      .get()
+
+    let fewShotSnapshot
+    try {
+      fewShotSnapshot = await baseQuery.orderBy('createdAt', 'desc').limit(5).get()
+    } catch (indexErr) {
+      console.warn(
+        '[PromptResolver] Índice composto para orderBy(createdAt) ausente — usando fallback sem ordenação. ' +
+          'Crie o índice para que o few-shot use os exemplos mais recentes. Detalhe:',
+        indexErr.message
+      )
+      fewShotSnapshot = await baseQuery.limit(5).get()
+    }
 
     fewShotExamples = fewShotSnapshot.docs.map((doc) => doc.data())
   } catch (err) {

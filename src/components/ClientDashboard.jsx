@@ -68,7 +68,7 @@ export default function ClientDashboard() {
       )
 
       setMetaResult(res.data)
-      addToast('success', 'Sugestão de prompt otimizado gerada pela IA!')
+      addToast('success', 'Pronto! O CRIA sugeriu um novo prompt otimizado.')
     } catch (err) {
       console.error('[ClientDashboard] Erro ao gerar meta-prompt:', err)
       addToast('error', err.response?.data?.error || 'Erro ao gerar otimização de prompt.')
@@ -92,7 +92,7 @@ export default function ClientDashboard() {
         { headers: getAuthHeaders() }
       )
 
-      addToast('success', `Novo prompt de ${metaPromptType === 'titulo' ? 'Título' : 'Descrição'} aplicado para ${activeClient.name}!`)
+      addToast('success', `Pronto! Novo prompt de ${metaPromptType === 'titulo' ? 'Título' : 'Descrição'} já está valendo para ${activeClient.name}.`)
       setMetaResult(null)
       fetchInsights()
     } catch (err) {

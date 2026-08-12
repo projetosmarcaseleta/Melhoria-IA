@@ -35,21 +35,22 @@ export default function FloatingActionBar({ onProcess, onApply, disabled }) {
           disabled={disabled}
           className="px-4 py-2 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5"
         >
-          <span>🤖 Processar IA</span>
+          <span>✨ Criar com o CRIA</span>
           <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white">
             {processable}
           </span>
         </button>
       )}
 
-      {/* Ação: Aplicar AnyMarket */}
+      {/* Ação principal: aprova E publica (mesmo handler do CTA da revisão) */}
       {applyable > 0 && onApply && (
         <button
           onClick={onApply}
           disabled={disabled}
-          className="px-4 py-2 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/30 transition-all flex items-center gap-1.5"
+          className="px-4 py-2 rounded-xl text-xs font-extrabold text-white shadow-md transition-all flex items-center gap-1.5"
+          style={{ background: 'linear-gradient(135deg, #336cff, #6337f1)' }}
         >
-          <span>🚀 Aplicar AnyMarket</span>
+          <span>🚀 Aprovar e publicar</span>
           <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white">
             {applyable}
           </span>

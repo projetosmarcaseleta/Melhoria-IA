@@ -36,7 +36,7 @@ export default function ClientSkillsManager() {
       setSkills(res.data)
     } catch (err) {
       console.error('[ClientSkillsManager] Erro ao carregar skills:', err)
-      addToast('error', 'Erro ao carregar habilidades do cliente.')
+      addToast('error', 'Não consegui carregar as habilidades desse cliente.')
     } finally {
       setLoading(false)
     }
@@ -69,7 +69,7 @@ export default function ClientSkillsManager() {
         },
         { headers: getAuthHeaders() }
       )
-      addToast('success', `Habilidade "${skill.name}" atualizada!`)
+      addToast('success', `Pronto! Habilidade "${skill.name}" atualizada.`)
     } catch (err) {
       console.error('[ClientSkillsManager] Erro ao salvar skill:', err)
       addToast('error', 'Erro ao salvar habilidade.')

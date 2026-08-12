@@ -49,15 +49,46 @@ router.post('/patch', async (req, res, next) => {
       { headers: { 'Content-Type': 'application/json' }, timeout: 55_000 }
     )
 
-    // Marcar gerações como aplicadas no Firestore
+    // Marcar gerações como aplicadas no Firestore.
+    //
+    // Publicar é o endosso humano mais forte que existe: se o operador mandou o
+    // texto para o marketplace, ele validou o resultado. Por isso promovemos
+    // feedbackStatus 'pending' → 'approved' aqui, para que essas gerações entrem
+    // no pool de few-shot do promptResolver (que filtra por approved/edited).
+    // Sem isso, todo anúncio publicado sem clique explícito em "Aprovar" ficava
+    // fora do aprendizado.
+    //
+    // Status já avaliados NÃO são sobrescritos: 'edited' e 'rejected' carregam
+    // informação mais específica que 'approved'.
     const { generationIds } = req.body ?? {}
     if (Array.isArray(generationIds) && generationIds.length > 0) {
+      const refs = generationIds.map((id) => db.collection('generations').doc(id))
+      const snapshots = await db.getAll(...refs)
+
       const batch = db.batch()
-      for (const id of generationIds) {
-        const docRef = db.collection('generations').doc(id)
-        batch.update(docRef, { appliedAt: FieldValue.serverTimestamp() })
+      let promoted = 0
+
+      for (const snap of snapshots) {
+        if (!snap.exists) continue
+
+        const updates = { appliedAt: FieldValue.serverTimestamp() }
+
+        if ((snap.data().feedbackStatus ?? 'pending') === 'pending') {
+          updates.feedbackStatus = 'approved'
+          updates.feedbackBy = req.user.id
+          updates.feedbackAt = FieldValue.serverTimestamp()
+          updates.approvedVia = 'publish'
+          promoted++
+        }
+
+        batch.update(snap.ref, updates)
       }
+
       await batch.commit()
+
+      if (promoted > 0) {
+        console.log(`[AnyMarket] Produto ${productId} → ${promoted} geração(ões) aprovada(s) pela publicação.`)
+      }
     }
 
     return res.json({ ok: true, status: n8nResponse.status, data: n8nResponse.data })

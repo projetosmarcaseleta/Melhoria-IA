@@ -1,6 +1,7 @@
 import { signOut } from 'firebase/auth'
 import { auth } from '../services/firebaseClient'
 import useStore from '../store/useStore'
+import CriaSymbol from './icons/CriaSymbol'
 
 export default function Header() {
   const setConfigOpen = useStore((s) => s.setConfigOpen)
@@ -51,12 +52,12 @@ export default function Header() {
         
         {/* Lado Esquerdo: Logo & Cliente Ativo */}
         <div className="flex items-center gap-2.5 flex-shrink-0">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-md shadow-indigo-500/20">
-            <span className="text-sm">🛍️</span>
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-white shadow-md shadow-indigo-500/20 p-1">
+            <CriaSymbol size={22} />
           </div>
 
           <span className="font-extrabold text-sm text-white tracking-tight hidden sm:inline">
-            Melhoria de Descrição
+            CRIA
           </span>
 
           {activeClient && (

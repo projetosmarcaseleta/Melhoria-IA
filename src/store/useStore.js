@@ -65,11 +65,24 @@ const useStore = create(
           ),
         })),
 
-      updateProductResult: (id, newTitle, newDescription, titleGenerationId, descGenerationId) =>
+      // `meta` carrega o retorno de validação do agente:
+      // { titleValidation, descValidation, titleRulesApplied, descRulesApplied }
+      updateProductResult: (id, newTitle, newDescription, titleGenerationId, descGenerationId, meta = {}) =>
         set((s) => ({
           products: s.products.map((p) =>
             p.id === id
-              ? { ...p, newTitle, newDescription, titleGenerationId, descGenerationId, status: 'processed' }
+              ? {
+                  ...p,
+                  newTitle,
+                  newDescription,
+                  titleGenerationId,
+                  descGenerationId,
+                  titleValidation: meta.titleValidation ?? null,
+                  descValidation: meta.descValidation ?? null,
+                  titleRulesApplied: meta.titleRulesApplied ?? [],
+                  descRulesApplied: meta.descRulesApplied ?? [],
+                  status: 'processed',
+                }
               : p
           ),
         })),

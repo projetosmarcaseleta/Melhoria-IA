@@ -86,7 +86,7 @@ export default function ProductTable() {
       ids = [...new Set(ids)]
     }
 
-    if (!ids.length) { addToast('warning', 'Adicione IDs primeiro.'); return }
+    if (!ids.length) { addToast('warning', 'Informe pelo menos um ID de produto.'); return }
 
     setFetchingWebhook(true)
     try {
@@ -95,7 +95,7 @@ export default function ProductTable() {
       clearSelection()
       addToast('success', `${fetched.length} produtos carregados do banco de dados.`)
     } catch (e) {
-      addToast('error', 'Erro na consulta: ' + e.message)
+      addToast('error', 'Não consegui buscar esses produtos: ' + e.message)
     } finally {
       setFetchingWebhook(false)
     }
@@ -115,10 +115,13 @@ export default function ProductTable() {
     const targets = products.filter((p) =>
       (ui.selectedIds.length ? ui.selectedIds.includes(p.id) : true) && p.status === 'idle'
     )
-    if (!targets.length) { addToast('info', 'Nenhum produto elegível (status Aguardando).'); return }
+    if (!targets.length) { addToast('info', 'Nenhum produto pronto para gerar no momento.'); return }
     targets.forEach((p) => updateProductStatus(p.id, 'processing'))
     setProcessing(true)
     setProgress(0, targets.length)
+
+    // Quantos anúncios saíram com alguma violação de regra do cliente
+    let needAttention = 0
 
     await parallelProcess(targets, CONCURRENCY, async (p) => {
       try {
@@ -132,8 +135,19 @@ export default function ProductTable() {
             fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
             fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
             r.titleGenerationId ?? p.titleGenerationId,
-            r.descGenerationId ?? p.descGenerationId
+            r.descGenerationId ?? p.descGenerationId,
+            {
+              titleValidation: r.titleValidation,
+              descValidation: r.descValidation,
+              titleRulesApplied: r.titleRulesApplied,
+              descRulesApplied: r.descRulesApplied,
+            }
           )
+          const violations = [
+            ...(r.titleValidation?.violations ?? []),
+            ...(r.descValidation?.violations ?? []),
+          ]
+          if (violations.length > 0) needAttention++
         }
       } catch (e) {
         updateProductStatus(p.id, 'error')
@@ -142,11 +156,24 @@ export default function ProductTable() {
     }, (done, total) => setProgress(done, total))
 
     setProcessing(false)
-    addToast('success', `IA concluída. ${targets.length} produtos processados.`)
-    
+
+    if (needAttention > 0) {
+      addToast(
+        'warning',
+        `Pronto! ${targets.length} anúncio(s) criado(s) — ${needAttention} precisa(m) da sua atenção.`
+      )
+    } else {
+      addToast('success', `Pronto! ${targets.length} anúncio(s) criado(s).`)
+    }
+
     if (config.soundNotification) {
       playCompletionSound()
-      showBrowserNotification('Processamento concluído', `${targets.length} produtos processados pela IA.`)
+      showBrowserNotification(
+        'Pronto! Seus anúncios estão criados.',
+        needAttention > 0
+          ? `${targets.length} anúncio(s) criado(s). Encontrei ${needAttention} que precisa(m) de revisão.`
+          : `${targets.length} anúncio(s) prontos para revisão.`
+      )
     }
     setTab('review')
   }
@@ -316,7 +343,7 @@ export default function ProductTable() {
                 <button
                   onClick={() => setTab('review')}
                   disabled={isLoading}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-md shadow-purple-600/30 transition-all flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5"
                 >
                   <span>👁️ 4. Revisar</span>
                 </button>

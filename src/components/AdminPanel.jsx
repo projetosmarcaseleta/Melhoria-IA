@@ -100,7 +100,7 @@ export default function AdminPanel() {
         { headers: getAuthHeaders() }
       )
 
-      addToast('success', `Cliente "${res.data.name}" cadastrado com sucesso!`)
+      addToast('success', `Pronto! Cliente "${res.data.name}" cadastrado.`)
       setNewClient({ name: '', slug: '', anymarket_token: '' })
       fetchClients()
     } catch (err) {
@@ -118,7 +118,7 @@ export default function AdminPanel() {
         { anymarket_token: tempTokenValue.trim() },
         { headers: getAuthHeaders() }
       )
-      addToast('success', 'Token AnyMarket atualizado!')
+      addToast('success', 'Pronto! Token da AnyMarket atualizado.')
       setEditingClientToken(null)
       fetchClients()
     } catch (err) {
@@ -191,7 +191,7 @@ export default function AdminPanel() {
   }
 
   const handleDeleteOperator = async (op) => {
-    if (!confirm(`Deseja remover permanentemente o acesso de ${op.name} (${op.email})?`)) return
+    if (!confirm(`Remover o acesso de ${op.name} (${op.email}) permanentemente?`)) return
 
     try {
       await axios.delete(`${API_BASE}/api/operators/${op.id}`, {

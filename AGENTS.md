@@ -6,7 +6,9 @@
 
 ## 1. Visão Geral do Projeto
 
-O **Melhoria de Descrição de Produtos** é uma plataforma multi-cliente orientada a agentes de IA com **aprendizado evolutivo contínuo**. O sistema transforma dados brutos de produtos (título, descrição, características) vindos do ERP/Marketplace (**AnyMarket**) em anúncios otimizados para SEO e alta conversão.
+O **CRIA** — agente de criação e enriquecimento de anúncios do ecossistema AnyTools (Marca Seleta) — é uma plataforma multi-cliente orientada a agentes de IA com **aprendizado evolutivo contínuo**. O sistema transforma dados brutos de produtos (título, descrição, características) vindos do ERP/Marketplace (**AnyMarket**) em anúncios otimizados para SEO e alta conversão.
+
+> Nomenclatura: sempre "CRIA" em caixa alta como nome do produto; em texto corrido, "o CRIA". Evitar "CRIA IA".
 
 ### O Problema Resolvido:
 Superar a limitação de geradores estáticos simples. Cada cliente possui suas próprias regras de negócio, tom de voz, lista de palavras proibidas, tokens da AnyMarket e manuais da marca. O sistema aprende a cada clique de **Aprovação ✅**, **Rejeição ❌** ou **Edição ✏️** feito pela equipe de operadores.
@@ -32,16 +34,34 @@ Toda chamada de geração de texto passa pelo [promptResolver.js](file:///c:/Use
 ```mermaid
 graph TB
     A["1. Prompt Template do Cliente<br>(ou Fallback Global)"] --> E["Prompt Resolver"]
-    B["2. Contexto RAG (.md)<br>Top-3 chunks via OpenAI Embedding"] --> E
-    C["3. Few-Shot Dinâmico<br>Últimas 5 gerações APROVADAS"] --> E
-    D["4. Skills Ativas do Cliente<br>Termos Proibidos + Tom de Voz"] --> E
+    B["2. Regras Estruturadas Aprovadas<br>(knowledge_rules, classificadas por IA)"] --> E
+    C["3. Base de Conhecimento (.md)<br>TODOS os chunks, em ordem"] --> E
+    D["4. Few-Shot Dinâmico<br>Últimas 5 gerações APROVADAS"] --> E
+    G["5. Skills Ativas do Cliente<br>Termos Proibidos + Tom de Voz"] --> E
     E --> F["LLM GPT-4o-mini"]
+    F --> H["Regras Determinísticas<br>(prepend/append exatos)"]
+    H --> I["Validação Pós-Geração<br>(proibições, limites, duplicação)"]
 ```
 
 1. **Prompt Base:** Template do cliente gravado no Firestore (`clients/{clientId}/prompts/{type}`) ou fallback global.
-2. **Contexto RAG (Fase 3):** Busca por similaridade semântica (cosseno) nos documentos `.md` do cliente usando embeddings da OpenAI (`text-embedding-3-small`).
-3. **Few-Shot Dinâmico (Fase 2):** Injeta os últimos 5 exemplos aprovados ou editados pelo operador humano para o cliente selecionado.
-4. **Skills Ativas (Fase 5):** Injeta regras de habilidades ativas (ex: palavras proibidas, tom de voz sofisticado/técnico, formatador HTML).
+2. **Regras Estruturadas:** No upload do `.md`, o [ruleExtractor.js](server/services/ruleExtractor.js) usa a OpenAI para classificar o documento em regras tipadas (`fixed_text`, `prohibition`, `mandatory_instruction`, `formatting`, `category_template`). As aprovadas entram no prompt como texto e alimentam as camadas determinística e de validação.
+3. **Base de Conhecimento:** Injeta **todos** os chunks `.md` do cliente, em ordem de `chunkIndex`.
+4. **Few-Shot Dinâmico:** Injeta as 5 gerações aprovadas/editadas **mais recentes** do cliente (`orderBy('createdAt','desc')` — exige índice composto no Firestore; há fallback sem ordenação se o índice não existir).
+5. **Skills Ativas:** Injeta regras de habilidades ativas (ex: palavras proibidas, tom de voz, formatador HTML).
+
+### Arquitetura híbrida: o que é semântico e o que é determinístico
+
+Nem toda regra vai para o prompt. A divisão importa:
+
+| Camada | Onde roda | Garantia |
+|---|---|---|
+| **Semântica** | Prompt (regras como texto + chunks + few-shot) | Melhor esforço do LLM |
+| **Determinística** | `applyDeterministicRules` em [outputValidator.js](server/services/outputValidator.js) | Textos com `prepend_exactly`/`append_exactly` são inseridos por código — não dependem do LLM |
+| **Validação** | `validateOutput` no mesmo arquivo | Detecta termo proibido, cerca markdown residual, excesso de caracteres e bloco fixo duplicado |
+
+> ⚠️ **Não trocar a camada 3 por busca por similaridade (top-K / cosseno).** Um documento de diretrizes de marca é integralmente relevante para todos os produtos; recortar por relevância descartava partes obrigatórias do contexto e o bloco institucional deixava de ser aplicado. `findTopKSimilarChunks` e `cosineSimilarity` existem em [ragService.js](server/services/ragService.js) mas estão deliberadamente fora do caminho de geração.
+
+O resultado de `validateOutput` volta na resposta de `POST /api/generate` (`titleValidation` / `descValidation`) e é exibido no card do produto no ReviewPanel — é assim que o CRIA avisa o operador do que precisa de atenção em vez de entregar o texto em silêncio.
 
 ---
 
@@ -144,7 +164,7 @@ MELHORIA DE DESCRICAO/
 
 Todas as rotas `/api/*` (exceto `/health`) exigem o header `Authorization: Bearer <firebase_id_token>`.
 
-* `POST /api/generate` — Gera títulos/descrições com IA aplicando RAG, Few-Shot e Skills.
+* `POST /api/generate` — Gera títulos/descrições aplicando regras estruturadas, base de conhecimento, Few-Shot e Skills. Devolve também `titleValidation`/`descValidation` (violações detectadas) e `titleRulesApplied`/`descRulesApplied` (regras determinísticas aplicadas).
 * `PATCH /api/feedback/:generationId` — Grava o feedback do operador (`approved`, `rejected`, `edited`).
 * `POST /api/feedback/batch` — Aplica feedback em lote para múltiplos produtos.
 * `GET /api/clients` — Lista todos os clientes ativos.

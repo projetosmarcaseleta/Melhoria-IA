@@ -17,27 +17,27 @@
 }
 
 :root {
-  /* Slate Dark Obsidian Theme - High Contrast & Premium Polish */
-  --bg-primary: #090d16;
-  --bg-secondary: #0f172a;
-  --bg-card: #1e293b;
-  --bg-card-hover: #334155;
-  --bg-elevated: #1e293b;
-  --bg-input: #0f172a;
-  
+  /* CRIA Dark Theme - Navy base + gradiente Blue -> Violet (brand book v1.0) */
+  --bg-primary: #0a0e2c;
+  --bg-secondary: #111a46;
+  --bg-card: #1a2350;
+  --bg-card-hover: #293464;
+  --bg-elevated: #1a2350;
+  --bg-input: #111a46;
+
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-default: rgba(255, 255, 255, 0.14);
-  --border-hover: rgba(99, 102, 241, 0.4);
-  --border-active: rgba(99, 102, 241, 0.7);
+  --border-hover: rgba(51, 108, 255, 0.4);
+  --border-active: rgba(99, 55, 241, 0.7);
 
   --text-primary: #f8fafc;   /* White high contrast */
   --text-secondary: #e2e8f0; /* Slate 200 - Very clear */
   --text-tertiary: #cbd5e1;  /* Slate 300 - Readable */
   --text-muted: #94a3b8;     /* Slate 400 - Readable subtle */
 
-  --accent-indigo: #6366f1;
-  --accent-indigo-light: #818cf8;
-  --accent-indigo-glow: rgba(99, 102, 241, 0.25);
+  --accent-indigo: #336cff;       /* CRIA Blue */
+  --accent-indigo-light: #6337f1; /* CRIA Violet */
+  --accent-indigo-glow: rgba(51, 108, 255, 0.25);
 
   --accent-emerald: #10b981;
   --accent-emerald-glow: rgba(16, 185, 129, 0.2);
@@ -48,8 +48,8 @@
   --accent-rose: #f43f5e;
   --accent-rose-glow: rgba(244, 63, 94, 0.2);
 
-  --accent-cyan: #06b6d4;
-  --accent-cyan-glow: rgba(6, 182, 212, 0.2);
+  --accent-cyan: #35b9ff; /* CRIA Cyan */
+  --accent-cyan-glow: rgba(53, 185, 255, 0.2);
 
   --glass-bg: rgba(15, 23, 42, 0.85);
   --glass-border: rgba(255, 255, 255, 0.12);
@@ -57,7 +57,7 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.7);
-  --shadow-glow-indigo: 0 0 30px rgba(99, 102, 241, 0.3);
+  --shadow-glow-indigo: 0 0 30px rgba(51, 108, 255, 0.3);
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -130,7 +130,7 @@
 
 /* ── Buttons ─────────────────────────────── */
 .btn-primary {
-  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  background: linear-gradient(135deg, #336cff, #6337f1);
   color: white;
   border: none;
   border-radius: var(--radius-sm);
@@ -145,7 +145,7 @@
   gap: 8px;
 }
 .btn-primary:hover:not(:disabled) {
-  box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 0 20px rgba(51, 108, 255, 0.4);
   transform: translateY(-1px);
 }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -184,8 +184,8 @@
 
 /* ── Token bar ───────────────────────────── */
 .token-bar {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(6, 182, 212, 0.08));
-  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: linear-gradient(135deg, rgba(51, 108, 255, 0.12), rgba(99, 55, 241, 0.10));
+  border: 1px solid rgba(51, 108, 255, 0.25);
   border-radius: var(--radius-md);
   padding: 16px 20px;
   display: flex;
@@ -212,7 +212,7 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.12) 0%, transparent 70%),
+  background: radial-gradient(ellipse at 50% 0%, rgba(51,108,255,0.12) 0%, transparent 70%),
               var(--bg-primary);
 }
 
@@ -286,7 +286,7 @@
 }
 
 .login-btn {
-  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  background: linear-gradient(135deg, #336cff, #6337f1);
   color: white;
   border: none;
   border-radius: var(--radius-sm);
@@ -303,7 +303,7 @@
 }
 
 .login-btn:hover:not(:disabled) {
-  box-shadow: 0 0 24px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 0 24px rgba(51, 108, 255, 0.4);
   transform: translateY(-1px);
 }
 

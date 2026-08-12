@@ -9,6 +9,7 @@ import {
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../services/firebaseClient'
 import useStore from '../store/useStore'
+import CriaSymbol from './icons/CriaSymbol'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -141,16 +142,16 @@ export default function LoginPage() {
 
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6 relative z-10 animate-slideUp">
         
-        {/* Header */}
+        {/* Header — lockup CRIA: símbolo + wordmark + tagline (brand book pág. 5) */}
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center mx-auto text-xl shadow-lg shadow-indigo-500/25">
-            🛍️
+          <div className="w-16 h-16 rounded-2xl bg-white flex items-center justify-center mx-auto shadow-lg shadow-indigo-500/25 p-2.5">
+            <CriaSymbol size={44} />
           </div>
           <h1 className="text-2xl font-extrabold text-white tracking-tight">
-            Melhoria de Descrição
+            CRIA
           </h1>
           <p className="text-xs text-slate-400">
-            Plataforma Multi-Cliente de Otimização de Anúncios com IA
+            Do produto bruto ao anúncio pronto.
           </p>
         </div>
 

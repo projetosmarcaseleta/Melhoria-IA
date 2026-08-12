@@ -31,7 +31,7 @@ export default function ClientSelector() {
       const data = await res.json()
       setClients(data.filter((c) => c.isActive !== false))
     } catch (err) {
-      setError('Erro ao carregar lista de clientes.')
+      setError('Não consegui carregar a lista de clientes.')
       console.error('[ClientSelector]', err)
     } finally {
       setLoading(false)
@@ -95,7 +95,7 @@ export default function ClientSelector() {
         {loading ? (
           <div className="py-12 text-center text-xs text-slate-400 space-y-3">
             <span className="login-spinner login-spinner-lg mx-auto" />
-            <p>Carregando clientes cadastrados...</p>
+            <p>Carregando seus clientes...</p>
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-12 text-center text-xs text-slate-400 bg-slate-950/60 rounded-2xl border border-slate-800 p-6 space-y-3">

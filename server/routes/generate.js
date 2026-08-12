@@ -182,8 +182,22 @@ router.post('/', async (req, res, next) => {
 
         results.push({
           id: product.id,
-          ...(doTitle ? { newTitle: newTitle.trim(), titleGenerationId: titleGenId } : {}),
-          ...(doDesc ? { newDescription: newDescription.trim(), descGenerationId: descGenId } : {}),
+          ...(doTitle
+            ? {
+                newTitle: newTitle.trim(),
+                titleGenerationId: titleGenId,
+                titleValidation: titleValidation,
+                titleRulesApplied: titleDeterministicRules,
+              }
+            : {}),
+          ...(doDesc
+            ? {
+                newDescription: newDescription.trim(),
+                descGenerationId: descGenId,
+                descValidation: descValidation,
+                descRulesApplied: descDeterministicRules,
+              }
+            : {}),
         })
       } catch (err) {
         const msg = err?.message ?? String(err)

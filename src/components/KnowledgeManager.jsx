@@ -79,12 +79,12 @@ export default function KnowledgeManager() {
         }
       )
 
-      addToast('success', res.data.message || `Documento "${file.name}" indexado com sucesso!`)
+      addToast('success', res.data.message || `Pronto! O CRIA já aprendeu o documento "${file.name}".`)
       fetchDocuments()
       fetchRules()
     } catch (err) {
       console.error('[KnowledgeManager] Erro no upload:', err)
-      addToast('error', err.response?.data?.error || 'Erro ao processar documento RAG.')
+      addToast('error', err.response?.data?.error || 'Não consegui processar esse documento.')
     } finally {
       setUploading(false)
     }
@@ -105,7 +105,7 @@ export default function KnowledgeManager() {
   }
 
   const handleDelete = async (docId, filename) => {
-    if (!confirm(`Deseja realmente excluir o documento "${filename}" e suas regras?`)) return
+    if (!confirm(`Excluir o documento "${filename}" e as regras aprendidas dele?`)) return
 
     try {
       await axios.delete(`${API_BASE}/api/knowledge/${activeClient.id}/${docId}`, {

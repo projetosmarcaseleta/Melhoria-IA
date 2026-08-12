@@ -217,7 +217,7 @@ export default function ConfigModal() {
         )
       }
 
-      addToast('success', 'Configurações salvas com sucesso!')
+      addToast('success', 'Pronto! Suas configurações foram salvas.')
       setConfigOpen(false)
     } catch (err) {
       console.error('[ConfigModal] Erro ao salvar:', err)
