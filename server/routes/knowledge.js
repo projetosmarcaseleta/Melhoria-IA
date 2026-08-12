@@ -115,7 +115,9 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
   try {
     const { clientId, docId } = req.params
 
-    // 1. Remover chunks do documento
+    // 1. Remover chunks individualmente
+    // ⚠️ Embeddings (1536 floats ~12KB cada) estouram o batch Firestore ao deletar.
+    // Solução: deletar cada chunk com doc.ref.delete() independente, sem batch.
     const chunksSnapshot = await db
       .collection('clients')
       .doc(clientId)
@@ -123,21 +125,25 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
       .where('docId', '==', docId)
       .get()
 
-    const batch = db.batch()
-    chunksSnapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref)
-    })
+    for (const doc of chunksSnapshot.docs) {
+      await doc.ref.delete()
+    }
+
+    console.log(`[Knowledge] ${chunksSnapshot.size} chunks removidos para docId ${docId}.`)
 
     // 2. Remover o documento principal
-    const docRef = db.collection('clients').doc(clientId).collection('knowledge_docs').doc(docId)
-    batch.delete(docRef)
-
-    await batch.commit()
+    await db
+      .collection('clients')
+      .doc(clientId)
+      .collection('knowledge_docs')
+      .doc(docId)
+      .delete()
 
     return res.json({ ok: true, message: 'Documento e chunks removidos com sucesso.' })
   } catch (err) {
     next(err)
   }
 })
+
 
 export default router
