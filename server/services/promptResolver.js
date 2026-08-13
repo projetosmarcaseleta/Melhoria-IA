@@ -13,6 +13,7 @@ import { db } from './firebaseAdmin.js'
 export async function resolvePrompt(clientId, promptType, productData = null) {
   // 1. Buscar prompt customizado do cliente
   let promptData = null
+  let isCustomClientPrompt = false
 
   const clientPromptDoc = await db
     .collection('clients')
@@ -23,8 +24,9 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
 
   if (clientPromptDoc.exists && clientPromptDoc.data()?.isActive) {
     promptData = clientPromptDoc.data()
+    isCustomClientPrompt = true
   } else {
-    // Fallback para prompt global
+    // Fallback para prompt global salvo no Firestore
     const globalPromptDoc = await db
       .collection('global_prompts')
       .doc(promptType)
@@ -33,10 +35,6 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     if (globalPromptDoc.exists) {
       promptData = globalPromptDoc.data()
     }
-  }
-
-  if (!promptData) {
-    promptData = getHardcodedDefaultPrompt(promptType)
   }
 
   // 2. Regras Estruturadas Aprovadas do Cliente (knowledge_rules)
@@ -73,17 +71,6 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   }
 
   // 3. Contexto da base de conhecimento do cliente (.md) — TODOS os chunks, em ordem.
-  //
-  // ATENÇÃO — decisão de arquitetura deliberada, não a "faltar" implementar:
-  // NÃO usar busca por similaridade (top-K / cosseno) aqui. Um documento de
-  // diretrizes de marca é integralmente relevante para todos os produtos, então
-  // um top-K descartaria partes obrigatórias do contexto — na prática, o bloco
-  // institucional caía fora e deixava de ser aplicado. Similaridade serve para
-  // corpus grande e heterogêneo, que não é o caso aqui.
-  //
-  // Por isso `ragService.findTopKSimilarChunks` / `cosineSimilarity` existem mas
-  // não são chamados, e o parâmetro `productData` desta função não é usado para
-  // montar query de embedding.
   let ragChunksUsed = []
   let ragContextText = ''
 
@@ -109,15 +96,21 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     console.warn('[PromptResolver] Aviso ao recuperar contexto RAG:', err.message)
   }
 
+  // Verificar se o cliente possui conhecimento cadastrado (.md ou regras)
+  const hasKnowledge = ragChunksUsed.length > 0 || approvedRules.length > 0
+
+  // Se não houver prompt customizado explícito do cliente, definir o envelope adequado:
+  // Se houver .md/regras → envelope especializado que dá precedência total ao manual da marca
+  // Se NÃO houver .md → fallback padrão clássico
+  if (!isCustomClientPrompt) {
+    if (hasKnowledge) {
+      promptData = getKnowledgeAlignedPrompt(promptType)
+    } else if (!promptData) {
+      promptData = getHardcodedDefaultPrompt(promptType)
+    }
+  }
+
   // 4. Buscar few-shot examples — as 5 gerações aprovadas/editadas MAIS RECENTES.
-  //
-  // O orderBy('createdAt','desc') é essencial: sem ele o Firestore devolve 5
-  // documentos em ordem de ID, ou seja, sempre os mesmos exemplos antigos —
-  // e o aprendizado evolutivo deixa de evoluir conforme novas aprovações entram.
-  //
-  // A consulta exige um índice composto (clientId + generationType +
-  // feedbackStatus + createdAt). Enquanto ele não existir no projeto, caímos
-  // para a consulta sem ordenação em vez de ficar sem nenhum exemplo.
   let fewShotExamples = []
   try {
     const baseQuery = db
@@ -191,7 +184,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   // Nota importante: Se houver blocos fixos determinísticos (prepend_exactly), instruir o LLM a focar no bloco técnico
   const hasPrependRules = approvedRules.some((r) => r.application === 'prepend_exactly')
   if (hasPrependRules) {
-    fullPrompt += `\n\nATENÇÃO: O texto institucional fixo será inserido automaticamente pelo sistema. Gere APENAS o bloco técnico do produto solicitado (introdução + especificações/recursos).`
+    fullPrompt += `\n\nATENÇÃO: O texto institucional fixo inicial será inserido automaticamente pelo sistema. Gere APENAS o conteúdo técnico do produto solicitado (frase introdutória + blocos/seções de especificações e recursos). NÃO repita o bloco institucional.`
   }
 
   // Injetar few-shot
@@ -220,10 +213,48 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     ragChunksUsed,
     approvedRules,
   }
-
 }
 
-/** Prompts globais de fallback */
+/**
+ * Prompt alinhado com a Base de Conhecimento (.md) do cliente.
+ * Usado quando o cliente possui .md/regras cadastradas, garantindo que
+ * o modelo siga a estrutura por categoria, seções em HTML e tom de voz da marca.
+ */
+function getKnowledgeAlignedPrompt(type) {
+  if (type === 'titulo') {
+    return {
+      version: 1,
+      content: `Você é um especialista em SEO e títulos de marketplaces para este cliente.
+
+MISSÃO E DIRETRIZES FUNDAMENTAIS:
+1. DIRETRIZES DA MARCA: Siga rigorosamente todas as regras de estrutura, hierarquia, limites de caracteres e formatação estabelecidas na Base de Conhecimento e Regras do cliente acima.
+2. LIMPEZA E PADRONIZAÇÃO: Remova códigos, termos proibidos, SKUs e pontuações indevidas conforme orientado nas diretrizes da marca.
+
+PROTOCOLO DE RESPOSTA:
+- Retorne EXCLUSIVAMENTE o texto do título otimizado em uma única linha.
+- Sem aspas, sem ponto final e sem comentários.`,
+    }
+  }
+
+  return {
+    version: 1,
+    content: `Você é o redator técnico e especialista em e-commerce e marketplaces oficial deste cliente.
+
+MISSÃO E DIRETRIZES FUNDAMENTAIS:
+1. DIRETRIZES DO CLIENTE: Siga rigorosamente a Base de Conhecimento e as Regras Estruturadas acima, que são a autoridade máxima de estilo, estrutura e regras deste cliente.
+2. ESTRUTURA E TEMPLATES: Identifique a categoria do produto e aplique exatamente a estrutura de seções, blocos e listas especificada nas diretrizes da marca para essa categoria (ou o padrão geral/default do manual caso não haja template específico).
+3. INTRODUÇÃO E TOM DE VOZ: Siga com fidelidade as regras de frase introdutória, formatação e tom de voz estabelecidas no documento da marca.
+4. DADOS TÉCNICOS E ATRIBUTOS: Preencha com precisão os atributos de cada seção correspondentes ao produto anunciado, aplicando as regras de precedência, variantes e especificações do manual.
+5. PALAVRAS E PADRÕES PROIBIDOS: Obedeça estritamente à lista de palavras, termos e práticas proibidas pelo cliente.
+6. FORMATAÇÃO HTML LIMPA: Utilize apenas HTML válido utilizando as tags permitidas (<p>, <strong>, <ul>, <li>). Não use tags de cabeçalho (<h1>/<h2>/<h3>), emojis, links ou tabelas.
+
+PROTOCOLO DE RESPOSTA:
+- Retorne EXCLUSIVAMENTE o código HTML da descrição gerada.
+- Não inclua marcadores de código Markdown (\`\`\`html), saudações, notas ou explicações.`,
+  }
+}
+
+/** Prompts globais de fallback para clientes sem base de conhecimento (.md) */
 function getHardcodedDefaultPrompt(type) {
   if (type === 'titulo') {
     return {
@@ -250,7 +281,7 @@ PROTOCOLO DE RESPOSTA
 - Retorne exclusivamente o texto do título otimizado.
 - Uma única linha, sem aspas e sem ponto final.
 - Proibido incluir explicações, notas de rodapé ou comentários.
-- Formatação OBRIGATÓRIA do Título (Title Case): A primeira letra de cada palavra DEVE ser MAIÚsCULA.`,
+- Formatação OBRIGATÓRIA do Título (Title Case): A primeira letra de cada palavra DEVE ser MAIÚSCULA.`,
     }
   }
 
