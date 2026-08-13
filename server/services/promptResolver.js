@@ -99,15 +99,13 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   // Verificar se o cliente possui conhecimento cadastrado (.md ou regras)
   const hasKnowledge = ragChunksUsed.length > 0 || approvedRules.length > 0
 
-  // Se não houver prompt customizado explícito do cliente, definir o envelope adequado:
-  // Se houver .md/regras → envelope especializado que dá precedência total ao manual da marca
-  // Se NÃO houver .md → fallback padrão clássico
-  if (!isCustomClientPrompt) {
-    if (hasKnowledge) {
-      promptData = getKnowledgeAlignedPrompt(promptType)
-    } else if (!promptData) {
-      promptData = getHardcodedDefaultPrompt(promptType)
-    }
+  // Se houver Base de Conhecimento (.md/regras), ela é a autoridade máxima.
+  // Usamos o envelope especializado getKnowledgeAlignedPrompt.
+  // Caso contrário, usamos o prompt do cliente ou o fallback default.
+  if (hasKnowledge) {
+    promptData = getKnowledgeAlignedPrompt(promptType)
+  } else if (!promptData) {
+    promptData = getHardcodedDefaultPrompt(promptType)
   }
 
   // 4. Buscar few-shot examples — as 5 gerações aprovadas/editadas MAIS RECENTES.
@@ -184,10 +182,10 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   // Nota importante: Se houver blocos fixos determinísticos (prepend_exactly), instruir o LLM a focar no bloco técnico
   const hasPrependRules = approvedRules.some((r) => r.application === 'prepend_exactly')
   if (hasPrependRules) {
-    fullPrompt += `\n\nATENÇÃO: O texto institucional fixo inicial será inserido automaticamente pelo sistema. Gere APENAS o conteúdo técnico do produto solicitado (frase introdutória + blocos/seções de especificações e recursos). NÃO repita o bloco institucional.`
+    fullPrompt += `\n\nATENÇÃO CRÍTICA: O texto institucional fixo inicial será inserido automaticamente pelo sistema no início exato da descrição. Gere APENAS o conteúdo técnico do produto solicitado (frase introdutória do produto + seções técnicas de especificações/recursos). NÃO repita o bloco institucional.`
   }
 
-  // Injetar few-shot
+  // Injetar few-shot (com salvaguarda de estrutura)
   if (fewShotExamples.length > 0) {
     const examplesBlock = fewShotExamples
       .map((ex, i) => {
@@ -197,7 +195,11 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
       })
       .join('\n---\n')
 
-    fullPrompt += `\n\nEXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE PARA ESTE CLIENTE:\n---\n${examplesBlock}\n---`
+    const fewShotNote = hasKnowledge
+      ? `\n\nEXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE (Use como referência de tom, mas obedeça rigorosamente a estrutura de seções da Base de Conhecimento acima):\n---\n${examplesBlock}\n---`
+      : `\n\nEXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE PARA ESTE CLIENTE:\n---\n${examplesBlock}\n---`
+
+    fullPrompt += fewShotNote
   }
 
   // Injetar skills
