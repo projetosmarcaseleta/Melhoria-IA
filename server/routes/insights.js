@@ -39,6 +39,8 @@ function extractWordFrequencies(texts, stopWords = []) {
     .map(([word, count]) => ({ word, count }))
 }
 
+import { isTestClient, getMockGenerations, getMockPrompt } from '../services/mockStorage.js'
+
 /**
  * GET /api/insights/:clientId
  * Retorna análise detalhada de métricas e padrões de aprendizado do cliente.
@@ -47,13 +49,22 @@ router.get('/:clientId', async (req, res, next) => {
   try {
     const { clientId } = req.params
 
-    // Buscar todas as gerações do cliente
-    const snapshot = await db
-      .collection('generations')
-      .where('clientId', '==', clientId)
-      .get()
+    let allGens = []
+    if (isTestClient(clientId)) {
+      allGens = getMockGenerations(clientId, 100)
+    } else {
+      try {
+        const snapshot = await db
+          .collection('generations')
+          .where('clientId', '==', clientId)
+          .get()
 
-    const allGens = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
+        allGens = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
+      } catch (err) {
+        console.warn('[Insights] Aviso Firestore:', err.message)
+        allGens = getMockGenerations(clientId, 100)
+      }
+    }
 
     const titleGens = allGens.filter((g) => g.generationType === 'titulo')
     const descGens = allGens.filter((g) => g.generationType === 'descricao')

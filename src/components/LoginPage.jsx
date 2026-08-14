@@ -135,6 +135,35 @@ export default function LoginPage() {
     }
   }
 
+  const setActiveClient = useStore((s) => s.setActiveClient)
+  const setTab = useStore((s) => s.setTab)
+
+  const handleEnterTestMode = () => {
+    setAuth(
+      {
+        id: 'test-operator-id',
+        email: 'teste@marcaseleta.com.br',
+        name: 'Operador Teste (Marca Seleta)',
+        role: 'admin',
+      },
+      { access_token: 'mock-test-token' }
+    )
+    setActiveClient({
+      id: 'teste-marca-seleta',
+      name: 'Teste - Marca Seleta',
+      slug: 'teste-marca-seleta',
+      anymarket_token: 'test-token-marca-seleta',
+      settings: {
+        ai_provider: 'openai',
+        model: 'gpt-4o-mini',
+        temperature: 1.0,
+        max_description_length: 2000,
+        max_title_length: 60,
+      },
+    })
+    setTab('products')
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-slate-950 relative overflow-hidden">
       {/* Ambient Radial Glow */}
@@ -239,6 +268,15 @@ export default function LoginPage() {
               <span>Entrar com Microsoft</span>
             </>
           )}
+        </button>
+
+        {/* Botão de Painel de Testes Independente */}
+        <button
+          type="button"
+          onClick={handleEnterTestMode}
+          className="w-full py-3 px-4 rounded-xl text-xs font-extrabold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:border-amber-500/50 shadow-md transition-all flex items-center justify-center gap-2"
+        >
+          <span>🧪 Entrar como Teste - Marca Seleta (Modo Independente)</span>
         </button>
 
         <div className="text-center pt-2 border-t border-slate-800">

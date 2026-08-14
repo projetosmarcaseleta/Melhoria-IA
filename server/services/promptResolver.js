@@ -1,4 +1,12 @@
 import { db } from './firebaseAdmin.js'
+import {
+  isTestClient,
+  getMockPrompt,
+  getMockRules,
+  getMockSkills,
+  getMockGenerations,
+} from './mockStorage.js'
+import { DEFAULT_SKILLS } from '../routes/skills.js'
 
 /**
  * Resolve o prompt final para um cliente + tipo de geração no Firestore.
@@ -11,29 +19,46 @@ import { db } from './firebaseAdmin.js'
  * 5. Enriquece com instruções de skills ativas
  */
 export async function resolvePrompt(clientId, promptType, productData = null) {
+  const isMock = isTestClient(clientId)
+
   // 1. Buscar prompt customizado do cliente
   let promptData = null
   let isCustomClientPrompt = false
 
-  const clientPromptDoc = await db
-    .collection('clients')
-    .doc(clientId)
-    .collection('prompts')
-    .doc(promptType)
-    .get()
-
-  if (clientPromptDoc.exists && clientPromptDoc.data()?.isActive) {
-    promptData = clientPromptDoc.data()
-    isCustomClientPrompt = true
+  if (isMock) {
+    promptData = getMockPrompt(clientId, promptType)
+    if (promptData) isCustomClientPrompt = true
   } else {
-    // Fallback para prompt global salvo no Firestore
-    const globalPromptDoc = await db
-      .collection('global_prompts')
-      .doc(promptType)
-      .get()
+    try {
+      const clientPromptDoc = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('prompts')
+        .doc(promptType)
+        .get()
 
-    if (globalPromptDoc.exists) {
-      promptData = globalPromptDoc.data()
+      if (clientPromptDoc.exists && clientPromptDoc.data()?.isActive) {
+        promptData = clientPromptDoc.data()
+        isCustomClientPrompt = true
+      }
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao buscar prompt do cliente:', err.message)
+    }
+
+    if (!promptData) {
+      try {
+        // Fallback para prompt global salvo no Firestore
+        const globalPromptDoc = await db
+          .collection('global_prompts')
+          .doc(promptType)
+          .get()
+
+        if (globalPromptDoc.exists) {
+          promptData = globalPromptDoc.data()
+        }
+      } catch (err) {
+        console.warn('[PromptResolver] Aviso ao buscar prompt global:', err.message)
+      }
     }
   }
 
@@ -41,59 +66,76 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   const approvedRules = []
   let structuredRulesText = ''
 
-  try {
-    const rulesSnapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('knowledge_rules')
-      .where('status', '==', 'approved')
-      .get()
-
-    if (!rulesSnapshot.empty) {
-      rulesSnapshot.docs.forEach((doc) => {
-        const r = { id: doc.id, ...doc.data() }
-        // Filtrar por escopo (titulo, descricao ou ambos)
-        const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
-        if (matchesScope) {
-          approvedRules.push(r)
-        }
-      })
-
-      if (approvedRules.length > 0) {
-        const rulesFormatted = approvedRules
-          .map((r, i) => `[Regra ${i + 1} - ${r.type.toUpperCase()}] (${r.name}): ${r.content || r.description}`)
-          .join('\n')
-        structuredRulesText = `REGRAS E POLÍTICAS ESTRUTURADAS APROVADAS DO CLIENTE (SEGUIR RIGOROSAMENTE):\n---\n${rulesFormatted}\n---`
+  if (isMock) {
+    const mockRules = getMockRules(clientId, true)
+    mockRules.forEach((r) => {
+      const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+      if (matchesScope) {
+        approvedRules.push(r)
       }
+    })
+  } else {
+    try {
+      const rulesSnapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_rules')
+        .where('status', '==', 'approved')
+        .get()
+
+      if (!rulesSnapshot.empty) {
+        rulesSnapshot.docs.forEach((doc) => {
+          const r = { id: doc.id, ...doc.data() }
+          // Filtrar por escopo (titulo, descricao ou ambos)
+          const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+          if (matchesScope) {
+            approvedRules.push(r)
+          }
+        })
+      }
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao carregar regras estruturadas (usando fallback mock):', err.message)
+      const mockRules = getMockRules(clientId, true)
+      mockRules.forEach((r) => {
+        const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+        if (matchesScope) approvedRules.push(r)
+      })
     }
-  } catch (err) {
-    console.warn('[PromptResolver] Aviso ao carregar regras estruturadas:', err.message)
+  }
+
+  if (approvedRules.length > 0) {
+    const rulesFormatted = approvedRules
+      .map((r, i) => `[Regra ${i + 1} - ${r.type.toUpperCase()}] (${r.name}): ${r.content || r.description}`)
+      .join('\n')
+    structuredRulesText = `REGRAS E POLÍTICAS ESTRUTURADAS APROVADAS DO CLIENTE (SEGUIR RIGOROSAMENTE):\n---\n${rulesFormatted}\n---`
   }
 
   // 3. Contexto da base de conhecimento do cliente (.md) — TODOS os chunks, em ordem.
   let ragChunksUsed = []
   let ragContextText = ''
 
-  try {
-    const chunksSnapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('knowledge_chunks')
-      .orderBy('chunkIndex')
-      .get()
+  if (!isMock) {
+    try {
+      const chunksSnapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_chunks')
+        .orderBy('chunkIndex')
+        .get()
 
-    if (!chunksSnapshot.empty) {
-      const allChunks = chunksSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }))
+      if (!chunksSnapshot.empty) {
+        const allChunks = chunksSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
 
-      ragChunksUsed = allChunks.map((c) => c.id)
-      const chunksContent = allChunks.map((c) => c.content).join('\n---\n')
-      ragContextText = `BASE DE CONHECIMENTO E REGRAS DO CLIENTE:\n---\n${chunksContent}\n---`
+        ragChunksUsed = allChunks.map((c) => c.id)
+        const chunksContent = allChunks.map((c) => c.content).join('\n---\n')
+        ragContextText = `BASE DE CONHECIMENTO E REGRAS DO CLIENTE:\n---\n${chunksContent}\n---`
+      }
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao recuperar contexto RAG:', err.message)
     }
-  } catch (err) {
-    console.warn('[PromptResolver] Aviso ao recuperar contexto RAG:', err.message)
   }
 
   // Verificar se o cliente possui conhecimento cadastrado (.md ou regras)
@@ -110,60 +152,87 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
 
   // 4. Buscar few-shot examples — as 5 gerações aprovadas/editadas MAIS RECENTES.
   let fewShotExamples = []
-  try {
-    const baseQuery = db
-      .collection('generations')
-      .where('clientId', '==', clientId)
-      .where('generationType', '==', promptType)
-      .where('feedbackStatus', 'in', ['approved', 'edited'])
-
-    let fewShotSnapshot
+  if (isMock) {
+    fewShotExamples = getMockGenerations(clientId, 5).filter(
+      (g) => g.generationType === promptType && ['approved', 'edited'].includes(g.feedbackStatus)
+    )
+  } else {
     try {
-      fewShotSnapshot = await baseQuery.orderBy('createdAt', 'desc').limit(5).get()
-    } catch (indexErr) {
-      console.warn(
-        '[PromptResolver] Índice composto para orderBy(createdAt) ausente — usando fallback sem ordenação. ' +
-          'Crie o índice para que o few-shot use os exemplos mais recentes. Detalhe:',
-        indexErr.message
-      )
-      fewShotSnapshot = await baseQuery.limit(5).get()
-    }
+      const baseQuery = db
+        .collection('generations')
+        .where('clientId', '==', clientId)
+        .where('generationType', '==', promptType)
+        .where('feedbackStatus', 'in', ['approved', 'edited'])
 
-    fewShotExamples = fewShotSnapshot.docs.map((doc) => doc.data())
-  } catch (err) {
-    console.warn('[PromptResolver] Aviso ao buscar few-shots:', err.message)
+      let fewShotSnapshot
+      try {
+        fewShotSnapshot = await baseQuery.orderBy('createdAt', 'desc').limit(5).get()
+      } catch (indexErr) {
+        fewShotSnapshot = await baseQuery.limit(5).get()
+      }
+
+      fewShotExamples = fewShotSnapshot.docs.map((doc) => doc.data())
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao buscar few-shots:', err.message)
+      fewShotExamples = getMockGenerations(clientId, 5)
+    }
   }
 
   // 5. Buscar skills ativas do cliente
   const skillsApplied = []
   let activeSkillsInstructions = []
 
-  try {
-    const skillsSnapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('skills')
-      .where('isActive', '==', true)
-      .get()
+  if (isMock) {
+    const mockSkills = getMockSkills(clientId, DEFAULT_SKILLS)
+    mockSkills.filter((s) => s.isActive).forEach((skill) => {
+      let injection = skill.promptInjection
+      if (skill.config) {
+        for (const [key, value] of Object.entries(skill.config)) {
+          injection = injection.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(value))
+        }
+      }
+      activeSkillsInstructions.push(injection)
+      skillsApplied.push(skill.id)
+    })
+  } else {
+    try {
+      const skillsSnapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('skills')
+        .where('isActive', '==', true)
+        .get()
 
-    for (const doc of skillsSnapshot.docs) {
-      const skill = doc.data()
-      if (skill.promptInjection) {
+      for (const doc of skillsSnapshot.docs) {
+        const skill = doc.data()
+        if (skill.promptInjection) {
+          let injection = skill.promptInjection
+          if (skill.config) {
+            for (const [key, value] of Object.entries(skill.config)) {
+              injection = injection.replace(
+                new RegExp(`\\{\\{${key}\\}\\}`, 'g'),
+                String(value)
+              )
+            }
+          }
+          activeSkillsInstructions.push(injection)
+          skillsApplied.push(doc.id)
+        }
+      }
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao buscar skills (usando fallback mock):', err.message)
+      const mockSkills = getMockSkills(clientId, DEFAULT_SKILLS)
+      mockSkills.filter((s) => s.isActive).forEach((skill) => {
         let injection = skill.promptInjection
         if (skill.config) {
           for (const [key, value] of Object.entries(skill.config)) {
-            injection = injection.replace(
-              new RegExp(`\\{\\{${key}\\}\\}`, 'g'),
-              String(value)
-            )
+            injection = injection.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(value))
           }
         }
         activeSkillsInstructions.push(injection)
-        skillsApplied.push(doc.id)
-      }
+        skillsApplied.push(skill.id)
+      })
     }
-  } catch (err) {
-    console.warn('[PromptResolver] Aviso ao buscar skills:', err.message)
   }
 
   // 6. Compilar prompt final — RAG + Regras Estruturadas

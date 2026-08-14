@@ -1,30 +1,43 @@
 import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { requireAdmin } from '../middleware/auth.js'
+import { isTestClient, getMockClients, getMockClient, TEST_CLIENT } from '../services/mockStorage.js'
 
 const router = Router()
 
 /**
  * GET /api/clients
- * Lista todos os clientes ativos.
+ * Lista todos os clientes ativos (incluindo o cliente de teste).
  */
 router.get('/', async (_req, res, next) => {
   try {
-    const snapshot = await db.collection('clients')
-      .where('isActive', '==', true)
-      .get()
+    let clients = []
+    try {
+      const snapshot = await db.collection('clients')
+        .where('isActive', '==', true)
+        .get()
 
-    const clients = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }))
+      clients = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+    } catch (dbErr) {
+      console.warn('[ClientsRoute] Aviso ao consultar Firestore (usando fallback mock):', dbErr.message)
+      return res.json(getMockClients())
+    }
 
-    // Ordenar por nome no servidor JS (Firestore exige índice composto para order+where em campos diffs)
+    // Garantir que a conta Teste - Marca Seleta sempre está presente na lista
+    if (!clients.some((c) => isTestClient(c.id) || isTestClient(c.slug))) {
+      clients.unshift({ ...TEST_CLIENT })
+    }
+
+    // Ordenar por nome no servidor JS
     clients.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 
     return res.json(clients)
   } catch (err) {
-    next(err)
+    // Em caso de erro grave, nunca deixar a lista vazia
+    return res.json(getMockClients())
   }
 })
 
@@ -34,12 +47,21 @@ router.get('/', async (_req, res, next) => {
  */
 router.get('/:id', async (req, res, next) => {
   try {
-    const doc = await db.collection('clients').doc(req.params.id).get()
-    if (!doc.exists) {
-      return res.status(404).json({ error: 'Cliente não encontrado.' })
+    const { id } = req.params
+    if (isTestClient(id)) {
+      return res.json(getMockClient(id))
     }
 
-    return res.json({ id: doc.id, ...doc.data() })
+    try {
+      const doc = await db.collection('clients').doc(id).get()
+      if (!doc.exists) {
+        return res.status(404).json({ error: 'Cliente não encontrado.' })
+      }
+      return res.json({ id: doc.id, ...doc.data() })
+    } catch (dbErr) {
+      console.warn('[ClientsRoute] Erro Firestore ao buscar cliente:', dbErr.message)
+      return res.json(getMockClient(id))
+    }
   } catch (err) {
     next(err)
   }

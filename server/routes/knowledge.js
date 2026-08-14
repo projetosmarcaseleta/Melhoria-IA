@@ -111,6 +111,15 @@ router.post('/:clientId', async (req, res, next) => {
   }
 })
 
+import {
+  isTestClient,
+  getMockKnowledgeDocs,
+  getMockRules,
+  saveMockRule,
+  updateMockRule,
+  deleteMockKnowledgeDoc,
+} from '../services/mockStorage.js'
+
 /**
  * GET /api/knowledge/:clientId
  * Lista todos os documentos .md cadastrados para o cliente.
@@ -119,18 +128,27 @@ router.get('/:clientId', async (req, res, next) => {
   try {
     const { clientId } = req.params
 
-    const snapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('knowledge_docs')
-      .get()
+    if (isTestClient(clientId)) {
+      return res.json(getMockKnowledgeDocs(clientId))
+    }
 
-    const docs = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }))
+    try {
+      const snapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_docs')
+        .get()
 
-    return res.json(docs)
+      const docs = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+
+      return res.json(docs)
+    } catch (err) {
+      console.warn('[KnowledgeDocs] Aviso Firestore:', err.message)
+      return res.json(getMockKnowledgeDocs(clientId))
+    }
   } catch (err) {
     next(err)
   }
@@ -144,18 +162,27 @@ router.get('/:clientId/rules', async (req, res, next) => {
   try {
     const { clientId } = req.params
 
-    const snapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('knowledge_rules')
-      .get()
+    if (isTestClient(clientId)) {
+      return res.json(getMockRules(clientId, false))
+    }
 
-    const rules = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }))
+    try {
+      const snapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_rules')
+        .get()
 
-    return res.json(rules)
+      const rules = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+
+      return res.json(rules)
+    } catch (err) {
+      console.warn('[KnowledgeRules] Aviso Firestore:', err.message)
+      return res.json(getMockRules(clientId, false))
+    }
   } catch (err) {
     next(err)
   }
@@ -170,13 +197,24 @@ router.put('/:clientId/rules/:ruleId', async (req, res, next) => {
     const { clientId, ruleId } = req.params
     const updates = req.body ?? {}
 
-    const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
-    await ruleRef.update({
-      ...updates,
-      updatedAt: FieldValue.serverTimestamp(),
-    })
+    if (isTestClient(clientId) || ruleId.startsWith('rule-teste')) {
+      const updated = updateMockRule(ruleId, updates)
+      return res.json({ ok: true, message: 'Regra atualizada com sucesso.', rule: updated })
+    }
 
-    return res.json({ ok: true, message: 'Regra atualizada com sucesso.' })
+    try {
+      const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
+      await ruleRef.update({
+        ...updates,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+
+      return res.json({ ok: true, message: 'Regra atualizada com sucesso.' })
+    } catch (err) {
+      console.warn('[RulePut] Aviso Firestore:', err.message)
+      const updated = updateMockRule(ruleId, updates)
+      return res.json({ ok: true, message: 'Regra atualizada em modo de contingência.', rule: updated })
+    }
   } catch (err) {
     next(err)
   }
@@ -190,15 +228,25 @@ router.post('/:clientId/rules/:ruleId/approve', async (req, res, next) => {
   try {
     const { clientId, ruleId } = req.params
 
-    const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
-    await ruleRef.update({
-      status: 'approved',
-      approvedBy: req.user.id,
-      approvedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    })
+    if (isTestClient(clientId) || ruleId.startsWith('rule-teste')) {
+      updateMockRule(ruleId, { status: 'approved', approvedBy: req.user?.id })
+      return res.json({ ok: true, message: 'Regra aprovada.' })
+    }
 
-    return res.json({ ok: true, message: 'Regra aprovada.' })
+    try {
+      const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
+      await ruleRef.update({
+        status: 'approved',
+        approvedBy: req.user.id,
+        approvedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+
+      return res.json({ ok: true, message: 'Regra aprovada.' })
+    } catch (err) {
+      updateMockRule(ruleId, { status: 'approved', approvedBy: req.user?.id })
+      return res.json({ ok: true, message: 'Regra aprovada em contingência.' })
+    }
   } catch (err) {
     next(err)
   }
@@ -212,13 +260,23 @@ router.post('/:clientId/rules/:ruleId/reject', async (req, res, next) => {
   try {
     const { clientId, ruleId } = req.params
 
-    const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
-    await ruleRef.update({
-      status: 'rejected',
-      updatedAt: FieldValue.serverTimestamp(),
-    })
+    if (isTestClient(clientId) || ruleId.startsWith('rule-teste')) {
+      updateMockRule(ruleId, { status: 'rejected' })
+      return res.json({ ok: true, message: 'Regra rejeitada.' })
+    }
 
-    return res.json({ ok: true, message: 'Regra rejeitada.' })
+    try {
+      const ruleRef = db.collection('clients').doc(clientId).collection('knowledge_rules').doc(ruleId)
+      await ruleRef.update({
+        status: 'rejected',
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+
+      return res.json({ ok: true, message: 'Regra rejeitada.' })
+    } catch (err) {
+      updateMockRule(ruleId, { status: 'rejected' })
+      return res.json({ ok: true, message: 'Regra rejeitada em contingência.' })
+    }
   } catch (err) {
     next(err)
   }
@@ -232,39 +290,49 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
   try {
     const { clientId, docId } = req.params
 
-    // 1. Remover chunks individualmente
-    const chunksSnapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('knowledge_chunks')
-      .where('docId', '==', docId)
-      .get()
-
-    for (const doc of chunksSnapshot.docs) {
-      await doc.ref.delete()
+    if (isTestClient(clientId) || docId.startsWith('doc-teste')) {
+      deleteMockKnowledgeDoc(clientId, docId)
+      return res.json({ ok: true, message: 'Documento de teste removido com sucesso.' })
     }
 
-    // 2. Remover regras associadas ao documento
-    const rulesSnapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('knowledge_rules')
-      .where('sourceDocId', '==', docId)
-      .get()
+    try {
+      // 1. Remover chunks individualmente
+      const chunksSnapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_chunks')
+        .where('docId', '==', docId)
+        .get()
 
-    for (const doc of rulesSnapshot.docs) {
-      await doc.ref.delete()
+      for (const doc of chunksSnapshot.docs) {
+        await doc.ref.delete()
+      }
+
+      // 2. Remover regras associadas ao documento
+      const rulesSnapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_rules')
+        .where('sourceDocId', '==', docId)
+        .get()
+
+      for (const doc of rulesSnapshot.docs) {
+        await doc.ref.delete()
+      }
+
+      // 3. Remover o documento principal
+      await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_docs')
+        .doc(docId)
+        .delete()
+
+      return res.json({ ok: true, message: 'Documento, chunks e regras removidos com sucesso.' })
+    } catch (err) {
+      deleteMockKnowledgeDoc(clientId, docId)
+      return res.json({ ok: true, message: 'Documento removido em contingência.' })
     }
-
-    // 3. Remover o documento principal
-    await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('knowledge_docs')
-      .doc(docId)
-      .delete()
-
-    return res.json({ ok: true, message: 'Documento, chunks e regras removidos com sucesso.' })
   } catch (err) {
     next(err)
   }

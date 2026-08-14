@@ -103,6 +103,8 @@ Somente HTML válido utilizando <p>, <ul> e <li>.
 Não incluir comentários, explicações ou qualquer texto fora do HTML.`,
 }
 
+import { isTestClient, getMockPrompt, saveMockPrompt } from '../services/mockStorage.js'
+
 /**
  * GET /api/prompts/:clientId
  * Retorna os prompts ativos de um cliente no Firestore e os prompts defaults globais.
@@ -116,33 +118,54 @@ router.get('/:clientId', async (req, res, next) => {
     }
 
     for (const type of ['titulo', 'descricao']) {
-      // Buscar no cliente
-      const clientDoc = await db
-        .collection('clients')
-        .doc(clientId)
-        .collection('prompts')
-        .doc(type)
-        .get()
-
-      if (clientDoc.exists && clientDoc.data()?.isActive) {
+      if (isTestClient(clientId)) {
+        const mockPrompt = getMockPrompt(clientId, type)
         result[type] = {
-          id: clientDoc.id,
-          content: clientDoc.data().content,
-          version: clientDoc.data().version ?? 1,
-          isGlobal: false,
+          id: type,
+          content: mockPrompt ? mockPrompt.content : DEFAULT_PROMPTS[type],
+          version: mockPrompt ? mockPrompt.version : 1,
+          isGlobal: !mockPrompt,
         }
       } else {
-        // Fallback global
-        const globalDoc = await db
-          .collection('global_prompts')
-          .doc(type)
-          .get()
+        try {
+          // Buscar no cliente
+          const clientDoc = await db
+            .collection('clients')
+            .doc(clientId)
+            .collection('prompts')
+            .doc(type)
+            .get()
 
-        result[type] = {
-          id: globalDoc.exists ? globalDoc.id : type,
-          content: globalDoc.exists ? globalDoc.data().content : DEFAULT_PROMPTS[type],
-          version: globalDoc.exists ? (globalDoc.data().version ?? 1) : 1,
-          isGlobal: true,
+          if (clientDoc.exists && clientDoc.data()?.isActive) {
+            result[type] = {
+              id: clientDoc.id,
+              content: clientDoc.data().content,
+              version: clientDoc.data().version ?? 1,
+              isGlobal: false,
+            }
+          } else {
+            // Fallback global
+            const globalDoc = await db
+              .collection('global_prompts')
+              .doc(type)
+              .get()
+
+            result[type] = {
+              id: globalDoc.exists ? globalDoc.id : type,
+              content: globalDoc.exists ? globalDoc.data().content : DEFAULT_PROMPTS[type],
+              version: globalDoc.exists ? (globalDoc.data().version ?? 1) : 1,
+              isGlobal: true,
+            }
+          }
+        } catch (dbErr) {
+          console.warn('[Prompts] Aviso Firestore (usando fallback padrão):', dbErr.message)
+          const mockPrompt = getMockPrompt(clientId, type)
+          result[type] = {
+            id: type,
+            content: mockPrompt ? mockPrompt.content : DEFAULT_PROMPTS[type],
+            version: mockPrompt ? mockPrompt.version : 1,
+            isGlobal: !mockPrompt,
+          }
         }
       }
     }
@@ -168,44 +191,58 @@ router.put('/:clientId', requireAdmin, async (req, res, next) => {
       })
     }
 
-    const clientRef = db.collection('clients').doc(clientId)
-    const clientDoc = await clientRef.get()
-
-    if (!clientDoc.exists) {
-      return res.status(404).json({ error: 'Cliente não encontrado.' })
+    if (isTestClient(clientId)) {
+      if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
+      if (descricao) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
+      return res.json({ ok: true, message: 'Prompts de teste atualizados com sucesso.' })
     }
 
-    const batch = db.batch()
+    try {
+      const clientRef = db.collection('clients').doc(clientId)
+      const clientDoc = await clientRef.get()
 
-    if (titulo) {
-      const titleRef = clientRef.collection('prompts').doc('titulo')
-      const currentDoc = await titleRef.get()
-      const currentVersion = currentDoc.exists ? (currentDoc.data().version ?? 1) : 0
+      if (!clientDoc.exists) {
+        if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
+        if (descricao) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
+        return res.json({ ok: true, message: 'Prompts atualizados com sucesso.' })
+      }
 
-      batch.set(titleRef, {
-        content: titulo,
-        version: currentVersion + 1,
-        isActive: true,
-        createdBy: req.user.id,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
+      const batch = db.batch()
+
+      if (titulo) {
+        const titleRef = clientRef.collection('prompts').doc('titulo')
+        const currentDoc = await titleRef.get()
+        const currentVersion = currentDoc.exists ? (currentDoc.data().version ?? 1) : 0
+
+        batch.set(titleRef, {
+          content: titulo,
+          version: currentVersion + 1,
+          isActive: true,
+          createdBy: req.user.id,
+          updatedAt: FieldValue.serverTimestamp(),
+        })
+      }
+
+      if (descricao) {
+        const descRef = clientRef.collection('prompts').doc('descricao')
+        const currentDoc = await descRef.get()
+        const currentVersion = currentDoc.exists ? (currentDoc.data().version ?? 1) : 0
+
+        batch.set(descRef, {
+          content: descricao,
+          version: currentVersion + 1,
+          isActive: true,
+          createdBy: req.user.id,
+          updatedAt: FieldValue.serverTimestamp(),
+        })
+      }
+
+      await batch.commit()
+    } catch (dbErr) {
+      console.warn('[PromptsPut] Aviso Firestore (salvando em mock):', dbErr.message)
+      if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
+      if (descricao) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
     }
-
-    if (descricao) {
-      const descRef = clientRef.collection('prompts').doc('descricao')
-      const currentDoc = await descRef.get()
-      const currentVersion = currentDoc.exists ? (currentDoc.data().version ?? 1) : 0
-
-      batch.set(descRef, {
-        content: descricao,
-        version: currentVersion + 1,
-        isActive: true,
-        createdBy: req.user.id,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-    }
-
-    await batch.commit()
 
     return res.json({ ok: true, message: 'Prompts atualizados com sucesso.' })
   } catch (err) {
