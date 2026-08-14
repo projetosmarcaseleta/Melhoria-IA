@@ -138,16 +138,15 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     }
   }
 
-  // Verificar se o cliente possui conhecimento cadastrado (.md ou regras)
-  const hasKnowledge = ragChunksUsed.length > 0 || approvedRules.length > 0
-
-  // Se houver Base de Conhecimento (.md/regras), ela é a autoridade máxima.
-  // Usamos o envelope especializado getKnowledgeAlignedPrompt.
-  // Caso contrário, usamos o prompt do cliente ou o fallback default.
-  if (hasKnowledge) {
-    promptData = getKnowledgeAlignedPrompt(promptType)
-  } else if (!promptData) {
-    promptData = getHardcodedDefaultPrompt(promptType)
+  // Se o cliente definiu um prompt customizado explicitamente, respeitamos esse prompt.
+  // Caso contrário, se houver Base de Conhecimento (.md/regras), usamos getKnowledgeAlignedPrompt.
+  // Se não houver nada, usamos o prompt default global.
+  if (!isCustomClientPrompt) {
+    if (hasKnowledge) {
+      promptData = getKnowledgeAlignedPrompt(promptType)
+    } else if (!promptData) {
+      promptData = getHardcodedDefaultPrompt(promptType)
+    }
   }
 
   // 4. Buscar few-shot examples — as 5 gerações aprovadas/editadas MAIS RECENTES.

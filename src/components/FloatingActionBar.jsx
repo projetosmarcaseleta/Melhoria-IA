@@ -1,8 +1,9 @@
 import useStore from '../store/useStore'
 
-export default function FloatingActionBar({ onProcess, onApply, disabled }) {
+export default function FloatingActionBar({ onProcess, onApply, onCancel, disabled }) {
   const selectedIds = useStore((s) => s.ui.selectedIds)
   const activeTab = useStore((s) => s.ui.activeTab)
+  const isProcessing = useStore((s) => s.ui.isProcessing)
   const clearSelection = useStore((s) => s.clearSelection)
   const products = useStore((s) => s.products)
 
@@ -28,8 +29,18 @@ export default function FloatingActionBar({ onProcess, onApply, disabled }) {
         </span>
       </div>
 
+      {/* Ação: Cancelar IA */}
+      {isProcessing && onCancel && (
+        <button
+          onClick={onCancel}
+          className="px-4 py-2 rounded-xl text-xs font-extrabold bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 transition-all flex items-center gap-1.5 animate-pulse"
+        >
+          <span>⏹️ Cancelar IA</span>
+        </button>
+      )}
+
       {/* Ação: Processar IA */}
-      {processable > 0 && onProcess && (
+      {!isProcessing && processable > 0 && onProcess && (
         <button
           onClick={onProcess}
           disabled={disabled}

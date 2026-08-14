@@ -65,6 +65,21 @@ export default function ProductTable() {
   const [inputMode, setInputMode] = useState('manual')
   const [manualText, setManualText] = useState('')
   const [fileRef, setFileRef] = useState(null)
+  const cancelProcessRef = useState({ current: false })[0]
+
+  // ── Cancelar Processamento com IA ─────────────────────────────────────────
+  const handleCancelAI = () => {
+    cancelProcessRef.current = true
+    setProcessing(false)
+    // Reverter produtos que ainda estão em 'processing' para 'idle'
+    const currentProducts = useStore.getState().products
+    currentProducts.forEach((p) => {
+      if (p.status === 'processing') {
+        updateProductStatus(p.id, 'idle')
+      }
+    })
+    addToast('info', 'Processamento da IA interrompido pelo operador.')
+  }
 
   // ── Upload Excel ────────────────────────────────────────────────────────
   const handleFileLoaded = async (file, err) => {
@@ -116,6 +131,8 @@ export default function ProductTable() {
       (ui.selectedIds.length ? ui.selectedIds.includes(p.id) : true) && p.status === 'idle'
     )
     if (!targets.length) { addToast('info', 'Nenhum produto pronto para gerar no momento.'); return }
+    
+    cancelProcessRef.current = false
     targets.forEach((p) => updateProductStatus(p.id, 'processing'))
     setProcessing(true)
     setProgress(0, targets.length)
@@ -123,37 +140,62 @@ export default function ProductTable() {
     // Quantos anúncios saíram com alguma violação de regra do cliente
     let needAttention = 0
 
-    await parallelProcess(targets, CONCURRENCY, async (p) => {
-      try {
-        const results = await processProductsWithAI([p], fields)
-        const r = results[0]
-        if (r.error) {
-          updateProductStatus(r.id, 'error')
-        } else {
-          updateProductResult(
-            r.id,
-            fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
-            fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
-            r.titleGenerationId ?? p.titleGenerationId,
-            r.descGenerationId ?? p.descGenerationId,
-            {
-              titleValidation: r.titleValidation,
-              descValidation: r.descValidation,
-              titleRulesApplied: r.titleRulesApplied,
-              descRulesApplied: r.descRulesApplied,
-            }
-          )
-          const violations = [
-            ...(r.titleValidation?.violations ?? []),
-            ...(r.descValidation?.violations ?? []),
-          ]
-          if (violations.length > 0) needAttention++
+    await parallelProcess(
+      targets,
+      CONCURRENCY,
+      async (p) => {
+        if (cancelProcessRef.current) {
+          updateProductStatus(p.id, 'idle')
+          return
         }
-      } catch (e) {
-        updateProductStatus(p.id, 'error')
-        addToast('error', `Erro produto ${p.id}: ` + e.message)
-      }
-    }, (done, total) => setProgress(done, total))
+        try {
+          const results = await processProductsWithAI([p], fields)
+          if (cancelProcessRef.current) {
+            updateProductStatus(p.id, 'idle')
+            return
+          }
+          const r = results[0]
+          if (r.error) {
+            updateProductStatus(r.id, 'error')
+          } else {
+            updateProductResult(
+              r.id,
+              fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
+              fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
+              r.titleGenerationId ?? p.titleGenerationId,
+              r.descGenerationId ?? p.descGenerationId,
+              {
+                titleValidation: r.titleValidation,
+                descValidation: r.descValidation,
+                titleRulesApplied: r.titleRulesApplied,
+                descRulesApplied: r.descRulesApplied,
+              }
+            )
+            const violations = [
+              ...(r.titleValidation?.violations ?? []),
+              ...(r.descValidation?.violations ?? []),
+            ]
+            if (violations.length > 0) needAttention++
+          }
+        } catch (e) {
+          if (!cancelProcessRef.current) {
+            updateProductStatus(p.id, 'error')
+            addToast('error', `Erro produto ${p.id}: ` + e.message)
+          }
+        }
+      },
+      (done, total) => {
+        if (!cancelProcessRef.current) {
+          setProgress(done, total)
+        }
+      },
+      () => cancelProcessRef.current
+    )
+
+    if (cancelProcessRef.current) {
+      setProcessing(false)
+      return
+    }
 
     setProcessing(false)
 
@@ -248,14 +290,27 @@ export default function ProductTable() {
         </div>
       </div>
 
-      {/* Barra de Progresso */}
+      {/* Barra de Progresso com Botão de Cancelar */}
       {isLoading && (ui.progress?.total ?? 0) > 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg">
-          <ProcessingBar
-            current={ui.progress?.current ?? 0}
-            total={ui.progress?.total ?? 0}
-            label={ui.isProcessing ? 'Processando com IA...' : ui.isApplying ? 'Aplicando no AnyMarket...' : 'Carregando...'}
-          />
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex-1">
+            <ProcessingBar
+              current={ui.progress?.current ?? 0}
+              total={ui.progress?.total ?? 0}
+              label={ui.isProcessing ? 'Processando com IA...' : ui.isApplying ? 'Aplicando no AnyMarket...' : 'Carregando...'}
+            />
+          </div>
+          {ui.isProcessing && (
+            <button
+              type="button"
+              onClick={handleCancelAI}
+              className="px-4 py-2.5 rounded-xl text-xs font-extrabold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 hover:border-rose-500 shadow-md transition-all flex items-center justify-center gap-2 shrink-0 animate-pulse"
+              title="Interromper geração de anúncios imediatamente"
+            >
+              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+              <span>⏹️ Cancelar Processamento</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -286,7 +341,7 @@ export default function ProductTable() {
               </select>
             </div>
 
-            {/* Controles de Processamento & Botões de Ação (REDESENHADOS PARA ALTO IMPACTO VISUAL) */}
+            {/* Controles de Processamento & Botões de Ação */}
             <div className="flex items-center gap-3 flex-wrap">
               {/* Seleção de Campos (Títulos / Descrições) */}
               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl">
@@ -333,13 +388,23 @@ export default function ProductTable() {
 
               {/* Botões de Ação */}
               <div className="flex items-center gap-2">
-                <button
-                  onClick={handleProcessAI}
-                  disabled={isLoading}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5"
-                >
-                  <span>🤖 3. Processar com IA</span>
-                </button>
+                {ui.isProcessing ? (
+                  <button
+                    type="button"
+                    onClick={handleCancelAI}
+                    className="px-4 py-2 rounded-xl text-xs font-extrabold bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 transition-all flex items-center gap-1.5 animate-pulse"
+                  >
+                    <span>⏹️ Cancelar Processamento</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleProcessAI}
+                    disabled={isLoading}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5"
+                  >
+                    <span>🤖 3. Processar com IA</span>
+                  </button>
+                )}
                 <button
                   onClick={() => setTab('review')}
                   disabled={isLoading}
@@ -466,7 +531,7 @@ export default function ProductTable() {
       )}
 
       {/* Floating Action Bar */}
-      <FloatingActionBar onProcess={handleProcessAI} disabled={isLoading} />
+      <FloatingActionBar onProcess={handleProcessAI} onCancel={handleCancelAI} disabled={isLoading} />
     </div>
   )
 }

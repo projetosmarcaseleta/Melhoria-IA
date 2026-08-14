@@ -268,44 +268,84 @@ export default function ReviewPanel() {
     finally { setProcessing(false); setProgress(0, 0) }
   }
 
+  const cancelProcessRef = useState({ current: false })[0]
+
+  const handleCancelAI = () => {
+    cancelProcessRef.current = true
+    setProcessing(false)
+    const currentProducts = useStore.getState().products
+    currentProducts.forEach((p) => {
+      if (p.status === 'processing') {
+        updateProductStatus(p.id, 'processed')
+      }
+    })
+    addToast('info', 'Processamento da IA interrompido.')
+  }
+
   const handleRedoSelected = async () => {
     const targets = reviewable.filter((p) => selected.includes(p.id))
     if (!targets.length) { addToast('warning', 'Selecione ao menos um produto.'); return }
     const fieldsMap = Object.fromEntries(targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))]))
+    
+    cancelProcessRef.current = false
     targets.forEach((p) => updateProductStatus(p.id, 'processing'))
     setProcessing(true)
     setProgress(0, targets.length)
 
     let needAttention = 0
 
-    await parallelProcess(targets, CONCURRENCY, async (p) => {
-      const fields = fieldsMap[p.id]
-      if (!fields?.length) return
-      try {
-        const results = await processProductsWithAI([p], fields)
-        const r = results[0]
-        if (r.error) updateProductStatus(r.id, 'error')
-        else {
-          updateProductResult(r.id,
-            fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
-            fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
-            r.titleGenerationId ?? p.titleGenerationId,
-            r.descGenerationId ?? p.descGenerationId,
-            {
-              titleValidation: r.titleValidation,
-              descValidation: r.descValidation,
-              titleRulesApplied: r.titleRulesApplied,
-              descRulesApplied: r.descRulesApplied,
-            }
-          )
-          const violations = [
-            ...(r.titleValidation?.violations ?? []),
-            ...(r.descValidation?.violations ?? []),
-          ]
-          if (violations.length > 0) needAttention++
+    await parallelProcess(
+      targets,
+      CONCURRENCY,
+      async (p) => {
+        if (cancelProcessRef.current) {
+          updateProductStatus(p.id, 'processed')
+          return
         }
-      } catch (e) { updateProductStatus(p.id, 'error') }
-    }, (done, total) => setProgress(done, total))
+        const fields = fieldsMap[p.id]
+        if (!fields?.length) return
+        try {
+          const results = await processProductsWithAI([p], fields)
+          if (cancelProcessRef.current) {
+            updateProductStatus(p.id, 'processed')
+            return
+          }
+          const r = results[0]
+          if (r.error) updateProductStatus(r.id, 'error')
+          else {
+            updateProductResult(r.id,
+              fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
+              fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
+              r.titleGenerationId ?? p.titleGenerationId,
+              r.descGenerationId ?? p.descGenerationId,
+              {
+                titleValidation: r.titleValidation,
+                descValidation: r.descValidation,
+                titleRulesApplied: r.titleRulesApplied,
+                descRulesApplied: r.descRulesApplied,
+              }
+            )
+            const violations = [
+              ...(r.titleValidation?.violations ?? []),
+              ...(r.descValidation?.violations ?? []),
+            ]
+            if (violations.length > 0) needAttention++
+          }
+        } catch (e) {
+          if (!cancelProcessRef.current) updateProductStatus(p.id, 'error')
+        }
+      },
+      (done, total) => {
+        if (!cancelProcessRef.current) setProgress(done, total)
+      },
+      () => cancelProcessRef.current
+    )
+
+    if (cancelProcessRef.current) {
+      setProcessing(false)
+      return
+    }
+
     setProcessing(false)
 
     if (needAttention > 0) {
@@ -597,6 +637,30 @@ export default function ReviewPanel() {
           </div>
         </div>
       </div>
+
+      {/* Barra de Progresso com Botão de Cancelar */}
+      {isLoading && (ui.progress?.total ?? 0) > 0 && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex-1">
+            <ProcessingBar
+              current={ui.progress?.current ?? 0}
+              total={ui.progress?.total ?? 0}
+              label={ui.isProcessing ? 'Processando com IA...' : 'Aplicando no AnyMarket...'}
+            />
+          </div>
+          {ui.isProcessing && (
+            <button
+              type="button"
+              onClick={handleCancelAI}
+              className="px-4 py-2.5 rounded-xl text-xs font-extrabold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 hover:border-rose-500 shadow-md transition-all flex items-center justify-center gap-2 shrink-0 animate-pulse"
+              title="Interromper geração de anúncios imediatamente"
+            >
+              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+              <span>⏹️ Cancelar Processamento</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Banner de Produtos Bloqueados */}
       {showBlockedBanner && (
@@ -982,7 +1046,12 @@ export default function ReviewPanel() {
         })}
       </div>
 
-      <FloatingActionBar onProcess={handleRedoSelected} onApply={handleApproveAndPublish} disabled={isLoading} />
+      <FloatingActionBar
+        onProcess={handleRedoSelected}
+        onApply={handleApproveAndPublish}
+        onCancel={handleCancelAI}
+        disabled={isLoading}
+      />
     </div>
   )
 }

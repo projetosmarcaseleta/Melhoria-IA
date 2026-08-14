@@ -60,34 +60,40 @@ router.post('/patch', async (req, res, next) => {
     //
     // Status já avaliados NÃO são sobrescritos: 'edited' e 'rejected' carregam
     // informação mais específica que 'approved'.
+    // Marcar gerações como aplicadas no Firestore (com fallback resiliente de cota)
     const { generationIds } = req.body ?? {}
     if (Array.isArray(generationIds) && generationIds.length > 0) {
-      const refs = generationIds.map((id) => db.collection('generations').doc(id))
-      const snapshots = await db.getAll(...refs)
+      try {
+        const refs = generationIds.filter((id) => !id.startsWith('gen-')).map((id) => db.collection('generations').doc(id))
+        if (refs.length > 0) {
+          const snapshots = await db.getAll(...refs)
+          const batch = db.batch()
+          let promoted = 0
 
-      const batch = db.batch()
-      let promoted = 0
+          for (const snap of snapshots) {
+            if (!snap.exists) continue
 
-      for (const snap of snapshots) {
-        if (!snap.exists) continue
+            const updates = { appliedAt: FieldValue.serverTimestamp() }
 
-        const updates = { appliedAt: FieldValue.serverTimestamp() }
+            if ((snap.data().feedbackStatus ?? 'pending') === 'pending') {
+              updates.feedbackStatus = 'approved'
+              updates.feedbackBy = req.user.id
+              updates.feedbackAt = FieldValue.serverTimestamp()
+              updates.approvedVia = 'publish'
+              promoted++
+            }
 
-        if ((snap.data().feedbackStatus ?? 'pending') === 'pending') {
-          updates.feedbackStatus = 'approved'
-          updates.feedbackBy = req.user.id
-          updates.feedbackAt = FieldValue.serverTimestamp()
-          updates.approvedVia = 'publish'
-          promoted++
+            batch.update(snap.ref, updates)
+          }
+
+          await batch.commit()
+
+          if (promoted > 0) {
+            console.log(`[AnyMarket] Produto ${productId} → ${promoted} geração(ões) aprovada(s) pela publicação.`)
+          }
         }
-
-        batch.update(snap.ref, updates)
-      }
-
-      await batch.commit()
-
-      if (promoted > 0) {
-        console.log(`[AnyMarket] Produto ${productId} → ${promoted} geração(ões) aprovada(s) pela publicação.`)
+      } catch (dbErr) {
+        console.warn('[AnyMarketPatch] Aviso ao atualizar gerações no Firestore (publicação bem sucedida no n8n):', dbErr.message)
       }
     }
 
