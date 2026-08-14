@@ -178,9 +178,10 @@ router.get('/:clientId', async (req, res, next) => {
 
 /**
  * PUT /api/prompts/:clientId
- * Salva ou atualiza prompts de um cliente no Firestore.
+ * Salva ou atualiza prompts de um cliente.
+ * No cliente de teste ('Teste - Marca Seleta'), todos os operadores têm permissão de edição.
  */
-router.put('/:clientId', requireAdmin, async (req, res, next) => {
+router.put('/:clientId', async (req, res, next) => {
   try {
     const { clientId } = req.params
     const { titulo, descricao } = req.body ?? {}
@@ -191,10 +192,16 @@ router.put('/:clientId', requireAdmin, async (req, res, next) => {
       })
     }
 
+    // Se for o cliente de teste, salva direto sem exigir role admin
     if (isTestClient(clientId)) {
       if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
       if (descricao) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
       return res.json({ ok: true, message: 'Prompts de teste atualizados com sucesso.' })
+    }
+
+    // Para outros clientes em produção, exige role admin
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores.' })
     }
 
     try {

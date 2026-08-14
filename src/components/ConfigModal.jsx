@@ -180,6 +180,13 @@ export default function ConfigModal() {
     addToast('success', `Prompt de ${promptTab === 'descricao' ? 'Descrição' : 'Título'} copiado para Customizado!`)
   }
 
+  const isTestMode =
+    activeClient?.id === 'teste-marca-seleta' ||
+    activeClient?.slug === 'teste-marca-seleta' ||
+    Boolean(activeClient?.isMock)
+
+  const canEditPrompt = auth.user?.role === 'admin' || isTestMode
+
   const save = async () => {
     try {
       setIsSaving(true)
@@ -192,12 +199,16 @@ export default function ConfigModal() {
 
       // 2. Atualizar token do cliente ativo se mudou
       if (activeClient?.id && form.anymarketToken !== activeClient.anymarket_token) {
-        if (auth.user?.role === 'admin') {
-          await axios.patch(
-            `${API_BASE}/api/clients/${activeClient.id}`,
-            { anymarket_token: form.anymarketToken },
-            { headers: getAuthHeaders() }
-          )
+        if (canEditPrompt) {
+          try {
+            await axios.patch(
+              `${API_BASE}/api/clients/${activeClient.id}`,
+              { anymarket_token: form.anymarketToken },
+              { headers: getAuthHeaders() }
+            )
+          } catch (patchErr) {
+            console.warn('[ConfigModal] Aviso ao atualizar token do cliente:', patchErr.message)
+          }
           setActiveClient({
             ...activeClient,
             anymarket_token: form.anymarketToken,
@@ -205,8 +216,8 @@ export default function ConfigModal() {
         }
       }
 
-      // 3. Salvar prompts no Firestore se em modo customizado ou se for admin
-      if (activeClient?.id && form.promptMode === 'custom' && auth.user?.role === 'admin') {
+      // 3. Salvar prompts no backend se em modo customizado e tiver permissão
+      if (activeClient?.id && form.promptMode === 'custom' && canEditPrompt) {
         await axios.put(
           `${API_BASE}/api/prompts/${activeClient.id}`,
           {
@@ -217,7 +228,7 @@ export default function ConfigModal() {
         )
       }
 
-      addToast('success', 'Pronto! Suas configurações foram salvas.')
+      addToast('success', 'Pronto! Suas configurações e prompts foram salvos.')
       setConfigOpen(false)
     } catch (err) {
       console.error('[ConfigModal] Erro ao salvar:', err)
@@ -467,7 +478,7 @@ export default function ConfigModal() {
 
                   <textarea
                     rows={11}
-                    readOnly={form.promptMode === 'default' || auth.user?.role !== 'admin'}
+                    readOnly={form.promptMode === 'default' || !canEditPrompt}
                     value={currentDisplayPrompt}
                     onChange={(e) => {
                       if (form.promptMode === 'custom') {
@@ -489,7 +500,13 @@ export default function ConfigModal() {
         {/* Modal Footer */}
         <div className="px-6 py-4 bg-slate-950/70 border-t border-slate-800 flex items-center justify-between shrink-0">
           <span className="text-xs text-slate-400">
-            {auth.user?.role !== 'admin' && 'Modo leitura (Apenas admins salvam edições)'}
+            {isTestMode ? (
+              <span className="text-amber-400 font-semibold flex items-center gap-1">
+                <span>🧪 Modo Teste:</span> Edição e salvamento de prompts liberados para todos os operadores.
+              </span>
+            ) : (
+              !canEditPrompt && 'Modo leitura (Apenas admins salvam edições)'
+            )}
           </span>
           <div className="flex items-center gap-3">
             <button
