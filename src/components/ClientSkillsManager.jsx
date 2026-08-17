@@ -36,7 +36,7 @@ export default function ClientSkillsManager() {
       setSkills(res.data)
     } catch (err) {
       console.error('[ClientSkillsManager] Erro ao carregar skills:', err)
-      addToast('error', 'Erro ao carregar habilidades do cliente.')
+      addToast('error', 'Não consegui carregar as habilidades desse cliente.')
     } finally {
       setLoading(false)
     }
@@ -69,7 +69,7 @@ export default function ClientSkillsManager() {
         },
         { headers: getAuthHeaders() }
       )
-      addToast('success', `Habilidade "${skill.name}" atualizada!`)
+      addToast('success', `Pronto! Habilidade "${skill.name}" atualizada.`)
     } catch (err) {
       console.error('[ClientSkillsManager] Erro ao salvar skill:', err)
       addToast('error', 'Erro ao salvar habilidade.')
@@ -137,7 +137,6 @@ export default function ClientSkillsManager() {
                 <button
                   type="button"
                   onClick={() => handleToggleSkill(skill.id)}
-                  disabled={auth.user?.role !== 'admin'}
                   className="w-10 h-[22px] rounded-full transition-all relative shrink-0"
                   style={{ background: isActive ? 'var(--accent-indigo)' : 'rgba(255,255,255,0.1)' }}
                   title={isActive ? 'Habilidade ativa' : 'Habilidade desativada'}
@@ -160,7 +159,6 @@ export default function ClientSkillsManager() {
                       <textarea
                         value={skill.config?.forbiddenWords ?? ''}
                         onChange={(e) => handleConfigChange(skill.id, 'forbiddenWords', e.target.value)}
-                        disabled={auth.user?.role !== 'admin'}
                         rows={3}
                         className="input-dark font-mono text-xs"
                       />
@@ -175,7 +173,6 @@ export default function ClientSkillsManager() {
                       <select
                         value={skill.config?.toneStyle ?? 'Técnico, Direto e Objetivo'}
                         onChange={(e) => handleConfigChange(skill.id, 'toneStyle', e.target.value)}
-                        disabled={auth.user?.role !== 'admin'}
                         className="input-dark text-xs"
                       >
                         <option value="Técnico, Direto e Objetivo">Técnico, Direto e Objetivo</option>
@@ -194,18 +191,16 @@ export default function ClientSkillsManager() {
                 </div>
               )}
 
-              {/* Action Button */}
-              {auth.user?.role === 'admin' && (
-                <div className="flex justify-end pt-2">
-                  <button
-                    onClick={() => handleSaveSkill(skill)}
-                    disabled={isSaving}
-                    className="btn-primary text-xs py-1.5 px-3"
-                  >
-                    {isSaving ? 'Salvando...' : '💾 Salvar Habilidade'}
-                  </button>
-                </div>
-              )}
+              {/* Action Button — visível para todos */}
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={() => handleSaveSkill(skill)}
+                  disabled={isSaving}
+                  className="btn-primary text-xs py-1.5 px-3"
+                >
+                  {isSaving ? 'Salvando...' : '💾 Salvar Habilidade'}
+                </button>
+              </div>
             </div>
           )
         })}

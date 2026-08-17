@@ -28,7 +28,7 @@ export async function showBrowserNotification(title, body) {
       await Notification.requestPermission()
     }
     if (Notification.permission === 'granted') {
-      new Notification(title, { body, icon: '🛍️' })
+      new Notification(title, { body, icon: '/favicon.svg' })
     }
   } catch {
     // silently fail

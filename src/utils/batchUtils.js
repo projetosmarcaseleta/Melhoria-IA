@@ -21,8 +21,9 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * O retorno é um array de resultados na mesma ordem de `items`.
  * Se `fn` lançar, o erro é capturado e a posição fica com `{ __error: err }`.
  * Use `onProgress(doneCount, total)` para acompanhar o progresso.
+ * Use `shouldCancel()` para abortar o processamento antecipadamente.
  */
-export async function parallelProcess(items, concurrency, fn, onProgress) {
+export async function parallelProcess(items, concurrency, fn, onProgress, shouldCancel = null) {
   const total   = items.length
   const results = new Array(total)
   let   nextIdx = 0
@@ -30,6 +31,7 @@ export async function parallelProcess(items, concurrency, fn, onProgress) {
 
   async function worker() {
     while (true) {
+      if (shouldCancel && shouldCancel()) break
       const i = nextIdx++
       if (i >= total) break
       try {

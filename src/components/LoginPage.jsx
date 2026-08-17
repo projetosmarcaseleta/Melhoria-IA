@@ -9,6 +9,7 @@ import {
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../services/firebaseClient'
 import useStore from '../store/useStore'
+import CriaSymbol from './icons/CriaSymbol'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -134,6 +135,35 @@ export default function LoginPage() {
     }
   }
 
+  const setActiveClient = useStore((s) => s.setActiveClient)
+  const setTab = useStore((s) => s.setTab)
+
+  const handleEnterTestMode = () => {
+    setAuth(
+      {
+        id: 'test-operator-id',
+        email: 'teste@marcaseleta.com.br',
+        name: 'Operador Teste (Marca Seleta)',
+        role: 'admin',
+      },
+      { access_token: 'mock-test-token' }
+    )
+    setActiveClient({
+      id: 'teste-marca-seleta',
+      name: 'Teste - Marca Seleta',
+      slug: 'teste-marca-seleta',
+      anymarket_token: 'test-token-marca-seleta',
+      settings: {
+        ai_provider: 'openai',
+        model: 'gpt-4o-mini',
+        temperature: 1.0,
+        max_description_length: 2000,
+        max_title_length: 60,
+      },
+    })
+    setTab('products')
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-slate-950 relative overflow-hidden">
       {/* Ambient Radial Glow */}
@@ -141,16 +171,16 @@ export default function LoginPage() {
 
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6 relative z-10 animate-slideUp">
         
-        {/* Header */}
+        {/* Header — lockup CRIA: símbolo + wordmark + tagline (brand book pág. 5) */}
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center mx-auto text-xl shadow-lg shadow-indigo-500/25">
-            🛍️
+          <div className="w-16 h-16 rounded-2xl bg-white flex items-center justify-center mx-auto shadow-lg shadow-indigo-500/25 p-2.5">
+            <CriaSymbol size={44} />
           </div>
           <h1 className="text-2xl font-extrabold text-white tracking-tight">
-            Melhoria de Descrição
+            CRIA
           </h1>
           <p className="text-xs text-slate-400">
-            Plataforma Multi-Cliente de Otimização de Anúncios com IA
+            Do produto bruto ao anúncio pronto.
           </p>
         </div>
 
@@ -238,6 +268,15 @@ export default function LoginPage() {
               <span>Entrar com Microsoft</span>
             </>
           )}
+        </button>
+
+        {/* Botão de Painel de Testes Independente */}
+        <button
+          type="button"
+          onClick={handleEnterTestMode}
+          className="w-full py-3 px-4 rounded-xl text-xs font-extrabold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:border-amber-500/50 shadow-md transition-all flex items-center justify-center gap-2"
+        >
+          <span>🧪 Entrar como Teste - Marca Seleta (Modo Independente)</span>
         </button>
 
         <div className="text-center pt-2 border-t border-slate-800">

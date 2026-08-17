@@ -66,6 +66,8 @@ export async function generateEmbedding(text) {
 
 /**
  * Calcula a similaridade de cosseno entre dois vetores.
+ *
+ * NÃO USADA no pipeline de geração — ver nota em `findTopKSimilarChunks`.
  */
 export function cosineSimilarity(vecA, vecB) {
   if (!vecA || !vecB || vecA.length !== vecB.length) return 0
@@ -86,6 +88,17 @@ export function cosineSimilarity(vecA, vecB) {
 
 /**
  * Busca os Top-K chunks mais similares no array de chunks carregados do Firestore.
+ *
+ * ⚠️ NÃO USADA no pipeline de geração — e isso é intencional.
+ *
+ * O `promptResolver` injeta TODOS os chunks da base do cliente, em ordem, porque
+ * um documento de diretrizes de marca é integralmente relevante para todos os
+ * produtos. Recortar por similaridade descartava partes obrigatórias do contexto
+ * (o bloco institucional deixava de ser aplicado). Não religue esta função no
+ * caminho de geração sem revisitar essa decisão.
+ *
+ * Mantida por ser útil caso a base de conhecimento algum dia cresça para um
+ * corpus grande e heterogêneo, onde recorte por relevância passe a fazer sentido.
  */
 export function findTopKSimilarChunks(queryEmbedding, chunks, topK = 3, minSimilarity = 0.3) {
   if (!Array.isArray(chunks) || chunks.length === 0) return []

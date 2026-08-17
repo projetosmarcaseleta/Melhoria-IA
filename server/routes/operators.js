@@ -4,22 +4,32 @@ import { requireAdmin } from '../middleware/auth.js'
 
 const router = Router()
 
+import { TEST_OPERATOR } from '../services/mockStorage.js'
+
 /**
  * GET /api/operators
  * Lista todos os operadores cadastrados no sistema. Requer role admin.
  */
 router.get('/', requireAdmin, async (_req, res, next) => {
   try {
-    const snapshot = await db.collection('operators').get()
+    try {
+      const snapshot = await db.collection('operators').get()
 
-    const operators = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }))
+      const operators = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
 
-    operators.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      if (!operators.some((o) => o.id === TEST_OPERATOR.id)) {
+        operators.push(TEST_OPERATOR)
+      }
 
-    return res.json(operators)
+      operators.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      return res.json(operators)
+    } catch (err) {
+      console.warn('[OperatorsRoute] Aviso Firestore (usando mock):', err.message)
+      return res.json([TEST_OPERATOR])
+    }
   } catch (err) {
     next(err)
   }

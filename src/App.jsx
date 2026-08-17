@@ -57,6 +57,11 @@ export default function App() {
           clearAuth()
         }
       } else {
+        const currentSession = useStore.getState().auth.session
+        if (currentSession?.access_token?.startsWith('mock-')) {
+          // Mantém a sessão do modo de teste ativa
+          return
+        }
         clearAuth()
       }
     })

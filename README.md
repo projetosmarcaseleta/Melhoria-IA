@@ -1,6 +1,6 @@
-# 🛍️ Melhoria de Descrição de Produtos (Plataforma de Agentes de IA Evolutivos)
+# CRIA — Inteligência que cria anúncios
 
-Plataforma multi-cliente com **aprendizado evolutivo contínuo** para otimização de títulos e descrições de produtos em marketplaces (AnyMarket) usando IAs Generativas da OpenAI e infraestrutura Firebase.
+Agente de criação e enriquecimento de anúncios do ecossistema **AnyTools** (Marca Seleta). O CRIA é uma plataforma multi-cliente com **aprendizado evolutivo contínuo** para otimização de títulos e descrições de produtos em marketplaces (AnyMarket) usando IAs Generativas da OpenAI e infraestrutura Firebase.
 
 ---
 
@@ -8,8 +8,9 @@ Plataforma multi-cliente com **aprendizado evolutivo contínuo** para otimizaç�
 
 - **🏢 Multi-Cliente Isolado:** Cada cliente possui suas próprias regras, prompts, tokens do AnyMarket e base de conhecimento.
 - **🔐 Autenticação & Permissões:** Login via Firebase Auth com papéis de `admin` e `editor`.
-- **🧠 Aprendizado Evolutivo com Few-Shot:** Aprende a cada aprovação/edição feita pelo operador humano e reutiliza automaticamente como contexto para novas gerações.
-- **📚 Base de Conhecimento RAG (.md):** Upload de manuais e regras da marca em Markdown com busca por similaridade semântica (OpenAI `text-embedding-3-small`).
+- **🧠 Aprendizado Evolutivo com Few-Shot:** Aprende a cada aprovação/edição feita pelo operador humano e reutiliza as 5 avaliações mais recentes como contexto para novas gerações.
+- **📚 Base de Conhecimento (.md) com extração de regras por IA:** Upload de manuais e regras da marca em Markdown; a OpenAI classifica o documento em regras tipadas (texto fixo, proibições, instruções obrigatórias, formatação) e o contexto completo é injetado nas gerações.
+- **✅ Validação pós-geração:** Cada anúncio gerado é checado contra as regras do cliente (termos proibidos, limite de caracteres, bloco institucional duplicado) e o CRIA avisa o operador do que precisa de revisão.
 - **⚡ Habilidades Personalizadas (Skills):** Filtro de palavras banidas por cliente, definição de tom de voz e padronizador de HTML.
 - **📈 Insights & Meta-Prompting:** Dashboard de métricas e autorrefinamento de prompts acionado via GPT-4o.
 - **🚀 Integração AnyMarket:** Sincronização direta de atualizações (PATCH) via webhooks do n8n.

@@ -1,5 +1,12 @@
 import { db } from './firebaseAdmin.js'
-import { generateEmbedding, findTopKSimilarChunks } from './ragService.js'
+import {
+  isTestClient,
+  getMockPrompt,
+  getMockRules,
+  getMockSkills,
+  getMockGenerations,
+} from './mockStorage.js'
+import { DEFAULT_SKILLS } from '../routes/skills.js'
 
 /**
  * Resolve o prompt final para um cliente + tipo de geração no Firestore.
@@ -12,126 +19,243 @@ import { generateEmbedding, findTopKSimilarChunks } from './ragService.js'
  * 5. Enriquece com instruções de skills ativas
  */
 export async function resolvePrompt(clientId, promptType, productData = null) {
+  const isMock = isTestClient(clientId)
+
   // 1. Buscar prompt customizado do cliente
   let promptData = null
+  let isCustomClientPrompt = false
 
-  const clientPromptDoc = await db
-    .collection('clients')
-    .doc(clientId)
-    .collection('prompts')
-    .doc(promptType)
-    .get()
-
-  if (clientPromptDoc.exists && clientPromptDoc.data()?.isActive) {
-    promptData = clientPromptDoc.data()
+  if (isMock) {
+    promptData = getMockPrompt(clientId, promptType)
+    if (promptData) isCustomClientPrompt = true
   } else {
-    // Fallback para prompt global
-    const globalPromptDoc = await db
-      .collection('global_prompts')
-      .doc(promptType)
-      .get()
+    try {
+      const clientPromptDoc = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('prompts')
+        .doc(promptType)
+        .get()
 
-    if (globalPromptDoc.exists) {
-      promptData = globalPromptDoc.data()
+      if (clientPromptDoc.exists && clientPromptDoc.data()?.isActive) {
+        promptData = clientPromptDoc.data()
+        isCustomClientPrompt = true
+      }
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao buscar prompt do cliente:', err.message)
+    }
+
+    if (!promptData) {
+      try {
+        // Fallback para prompt global salvo no Firestore
+        const globalPromptDoc = await db
+          .collection('global_prompts')
+          .doc(promptType)
+          .get()
+
+        if (globalPromptDoc.exists) {
+          promptData = globalPromptDoc.data()
+        }
+      } catch (err) {
+        console.warn('[PromptResolver] Aviso ao buscar prompt global:', err.message)
+      }
     }
   }
 
-  if (!promptData) {
-    promptData = getHardcodedDefaultPrompt(promptType)
+  // 2. Regras Estruturadas Aprovadas do Cliente (knowledge_rules)
+  const approvedRules = []
+  let structuredRulesText = ''
+
+  if (isMock) {
+    const mockRules = getMockRules(clientId, true)
+    mockRules.forEach((r) => {
+      const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+      if (matchesScope) {
+        approvedRules.push(r)
+      }
+    })
+  } else {
+    try {
+      const rulesSnapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_rules')
+        .where('status', '==', 'approved')
+        .get()
+
+      if (!rulesSnapshot.empty) {
+        rulesSnapshot.docs.forEach((doc) => {
+          const r = { id: doc.id, ...doc.data() }
+          // Filtrar por escopo (titulo, descricao ou ambos)
+          const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+          if (matchesScope) {
+            approvedRules.push(r)
+          }
+        })
+      }
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao carregar regras estruturadas (usando fallback mock):', err.message)
+      const mockRules = getMockRules(clientId, true)
+      mockRules.forEach((r) => {
+        const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+        if (matchesScope) approvedRules.push(r)
+      })
+    }
   }
 
-  // 2. RAG — Buscar contexto relevante da base de conhecimento do cliente (.md)
+  if (approvedRules.length > 0) {
+    const rulesFormatted = approvedRules
+      .map((r, i) => `[Regra ${i + 1} - ${r.type.toUpperCase()}] (${r.name}): ${r.content || r.description}`)
+      .join('\n')
+    structuredRulesText = `REGRAS E POLÍTICAS ESTRUTURADAS APROVADAS DO CLIENTE (SEGUIR RIGOROSAMENTE):\n---\n${rulesFormatted}\n---`
+  }
+
+  // 3. Contexto da base de conhecimento do cliente (.md) — TODOS os chunks, em ordem.
   let ragChunksUsed = []
   let ragContextText = ''
 
-  if (productData && (productData.title || productData.description)) {
+  if (!isMock) {
     try {
-      // Buscar chunks gravados na subcoleção do cliente ou coleção global
       const chunksSnapshot = await db
         .collection('clients')
         .doc(clientId)
         .collection('knowledge_chunks')
+        .orderBy('chunkIndex')
         .get()
 
       if (!chunksSnapshot.empty) {
-        const queryText = `${productData.title ?? ''} ${productData.description ?? ''} ${productData.characteristics ?? ''}`.trim()
-        const queryEmbedding = await generateEmbedding(queryText)
-
         const allChunks = chunksSnapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         }))
 
-        const topChunks = findTopKSimilarChunks(queryEmbedding, allChunks, 3, 0.25)
-
-        if (topChunks.length > 0) {
-          ragChunksUsed = topChunks.map((c) => c.id)
-          const chunksContent = topChunks.map((c) => c.content).join('\n---\n')
-          ragContextText = `BASE DE CONHECIMENTO E REGRAS DO CLIENTE:\n---\n${chunksContent}\n---`
-        }
+        ragChunksUsed = allChunks.map((c) => c.id)
+        const chunksContent = allChunks.map((c) => c.content).join('\n---\n')
+        ragContextText = `BASE DE CONHECIMENTO E REGRAS DO CLIENTE:\n---\n${chunksContent}\n---`
       }
     } catch (err) {
       console.warn('[PromptResolver] Aviso ao recuperar contexto RAG:', err.message)
     }
   }
 
-  // 3. Buscar few-shot examples (gerações aprovadas recentes do cliente)
-  let fewShotExamples = []
-  try {
-    const fewShotSnapshot = await db
-      .collection('generations')
-      .where('clientId', '==', clientId)
-      .where('generationType', '==', promptType)
-      .where('feedbackStatus', 'in', ['approved', 'edited'])
-      .limit(5)
-      .get()
+  // Se o cliente definiu um prompt customizado explicitamente, respeitamos esse prompt.
+  // Caso contrário, se houver Base de Conhecimento (.md/regras), usamos getKnowledgeAlignedPrompt.
+  // Se não houver nada, usamos o prompt default global.
+  const hasKnowledge = ragChunksUsed.length > 0 || approvedRules.length > 0
 
-    fewShotExamples = fewShotSnapshot.docs.map((doc) => doc.data())
-  } catch (err) {
-    console.warn('[PromptResolver] Aviso ao buscar few-shots:', err.message)
+  if (!isCustomClientPrompt) {
+    if (hasKnowledge) {
+      promptData = getKnowledgeAlignedPrompt(promptType)
+    } else if (!promptData) {
+      promptData = getHardcodedDefaultPrompt(promptType)
+    }
   }
 
-  // 4. Buscar skills ativas do cliente
+  // 4. Buscar few-shot examples — as 5 gerações aprovadas/editadas MAIS RECENTES.
+  let fewShotExamples = []
+  if (isMock) {
+    fewShotExamples = getMockGenerations(clientId, 5).filter(
+      (g) => g.generationType === promptType && ['approved', 'edited'].includes(g.feedbackStatus)
+    )
+  } else {
+    try {
+      const baseQuery = db
+        .collection('generations')
+        .where('clientId', '==', clientId)
+        .where('generationType', '==', promptType)
+        .where('feedbackStatus', 'in', ['approved', 'edited'])
+
+      let fewShotSnapshot
+      try {
+        fewShotSnapshot = await baseQuery.orderBy('createdAt', 'desc').limit(5).get()
+      } catch (indexErr) {
+        fewShotSnapshot = await baseQuery.limit(5).get()
+      }
+
+      fewShotExamples = fewShotSnapshot.docs.map((doc) => doc.data())
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao buscar few-shots:', err.message)
+      fewShotExamples = getMockGenerations(clientId, 5)
+    }
+  }
+
+  // 5. Buscar skills ativas do cliente
   const skillsApplied = []
   let activeSkillsInstructions = []
 
-  try {
-    const skillsSnapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('skills')
-      .where('isActive', '==', true)
-      .get()
+  if (isMock) {
+    const mockSkills = getMockSkills(clientId, DEFAULT_SKILLS)
+    mockSkills.filter((s) => s.isActive).forEach((skill) => {
+      let injection = skill.promptInjection
+      if (skill.config) {
+        for (const [key, value] of Object.entries(skill.config)) {
+          injection = injection.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(value))
+        }
+      }
+      activeSkillsInstructions.push(injection)
+      skillsApplied.push(skill.id)
+    })
+  } else {
+    try {
+      const skillsSnapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('skills')
+        .where('isActive', '==', true)
+        .get()
 
-    for (const doc of skillsSnapshot.docs) {
-      const skill = doc.data()
-      if (skill.promptInjection) {
+      for (const doc of skillsSnapshot.docs) {
+        const skill = doc.data()
+        if (skill.promptInjection) {
+          let injection = skill.promptInjection
+          if (skill.config) {
+            for (const [key, value] of Object.entries(skill.config)) {
+              injection = injection.replace(
+                new RegExp(`\\{\\{${key}\\}\\}`, 'g'),
+                String(value)
+              )
+            }
+          }
+          activeSkillsInstructions.push(injection)
+          skillsApplied.push(doc.id)
+        }
+      }
+    } catch (err) {
+      console.warn('[PromptResolver] Aviso ao buscar skills (usando fallback mock):', err.message)
+      const mockSkills = getMockSkills(clientId, DEFAULT_SKILLS)
+      mockSkills.filter((s) => s.isActive).forEach((skill) => {
         let injection = skill.promptInjection
         if (skill.config) {
           for (const [key, value] of Object.entries(skill.config)) {
-            injection = injection.replace(
-              new RegExp(`\\{\\{${key}\\}\\}`, 'g'),
-              String(value)
-            )
+            injection = injection.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(value))
           }
         }
         activeSkillsInstructions.push(injection)
-        skillsApplied.push(doc.id)
-      }
+        skillsApplied.push(skill.id)
+      })
     }
-  } catch (err) {
-    console.warn('[PromptResolver] Aviso ao buscar skills:', err.message)
   }
 
-  // 5. Compilar prompt final
-  let fullPrompt = promptData.content
+  // 6. Compilar prompt final — RAG + Regras Estruturadas
+  let fullPrompt = ''
 
-  // Injetar RAG
+  if (structuredRulesText) {
+    fullPrompt += `${structuredRulesText}\n\n`
+  }
+
   if (ragContextText) {
-    fullPrompt += `\n\n${ragContextText}`
+    fullPrompt += `${ragContextText}\n\n`
   }
 
-  // Injetar few-shot
+  fullPrompt += `INSTRUÇÕES DE GERAÇÃO E FORMATAÇÃO:\n${promptData.content}`
+
+  // Nota importante: Se houver blocos fixos determinísticos (prepend_exactly), instruir o LLM a focar no bloco técnico
+  const hasPrependRules = approvedRules.some((r) => r.application === 'prepend_exactly')
+  if (hasPrependRules) {
+    fullPrompt += `\n\nATENÇÃO CRÍTICA: O texto institucional fixo inicial será inserido automaticamente pelo sistema no início exato da descrição. Gere APENAS o conteúdo técnico do produto solicitado (frase introdutória do produto + seções técnicas de especificações/recursos). NÃO repita o bloco institucional.`
+  }
+
+  // Injetar few-shot (com salvaguarda de estrutura)
   if (fewShotExamples.length > 0) {
     const examplesBlock = fewShotExamples
       .map((ex, i) => {
@@ -141,7 +265,11 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
       })
       .join('\n---\n')
 
-    fullPrompt += `\n\nEXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE PARA ESTE CLIENTE:\n---\n${examplesBlock}\n---`
+    const fewShotNote = hasKnowledge
+      ? `\n\nEXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE (Use como referência de tom, mas obedeça rigorosamente a estrutura de seções da Base de Conhecimento acima):\n---\n${examplesBlock}\n---`
+      : `\n\nEXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE PARA ESTE CLIENTE:\n---\n${examplesBlock}\n---`
+
+    fullPrompt += fewShotNote
   }
 
   // Injetar skills
@@ -155,23 +283,63 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     fewShotExamples,
     skillsApplied,
     ragChunksUsed,
+    approvedRules,
   }
 }
 
-/** Prompts globais de fallback */
+/**
+ * Prompt alinhado com a Base de Conhecimento (.md) do cliente.
+ * Usado quando o cliente possui .md/regras cadastradas, garantindo que
+ * o modelo siga a estrutura por categoria, seções em HTML e tom de voz da marca.
+ */
+function getKnowledgeAlignedPrompt(type) {
+  if (type === 'titulo') {
+    return {
+      version: 1,
+      content: `Você é um especialista em SEO e títulos de marketplaces para este cliente.
+
+MISSÃO E DIRETRIZES FUNDAMENTAIS:
+1. DIRETRIZES DA MARCA: Siga rigorosamente todas as regras de estrutura, hierarquia, limites de caracteres e formatação estabelecidas na Base de Conhecimento e Regras do cliente acima.
+2. LIMPEZA E PADRONIZAÇÃO: Remova códigos, termos proibidos, SKUs e pontuações indevidas conforme orientado nas diretrizes da marca.
+
+PROTOCOLO DE RESPOSTA:
+- Retorne EXCLUSIVAMENTE o texto do título otimizado em uma única linha.
+- Sem aspas, sem ponto final e sem comentários.`,
+    }
+  }
+
+  return {
+    version: 1,
+    content: `Você é o redator técnico e especialista em e-commerce e marketplaces oficial deste cliente.
+
+MISSÃO E DIRETRIZES FUNDAMENTAIS:
+1. DIRETRIZES DO CLIENTE: Siga rigorosamente a Base de Conhecimento e as Regras Estruturadas acima, que são a autoridade máxima de estilo, estrutura e regras deste cliente.
+2. ESTRUTURA E TEMPLATES: Identifique a categoria do produto e aplique exatamente a estrutura de seções, blocos e listas especificada nas diretrizes da marca para essa categoria (ou o padrão geral/default do manual caso não haja template específico).
+3. INTRODUÇÃO E TOM DE VOZ: Siga com fidelidade as regras de frase introdutória, formatação e tom de voz estabelecidas no documento da marca.
+4. DADOS TÉCNICOS E ATRIBUTOS: Preencha com precisão os atributos de cada seção correspondentes ao produto anunciado, aplicando as regras de precedência, variantes e especificações do manual.
+5. PALAVRAS E PADRÕES PROIBIDOS: Obedeça estritamente à lista de palavras, termos e práticas proibidas pelo cliente.
+6. FORMATAÇÃO HTML LIMPA: Utilize apenas HTML válido utilizando as tags permitidas (<p>, <strong>, <ul>, <li>). Não use tags de cabeçalho (<h1>/<h2>/<h3>), emojis, links ou tabelas.
+
+PROTOCOLO DE RESPOSTA:
+- Retorne EXCLUSIVAMENTE o código HTML da descrição gerada.
+- Não inclua marcadores de código Markdown (\`\`\`html), saudações, notas ou explicações.`,
+  }
+}
+
+/** Prompts globais de fallback para clientes sem base de conhecimento (.md) */
 function getHardcodedDefaultPrompt(type) {
   if (type === 'titulo') {
     return {
       version: 1,
       content: `Você é um especialista sênior em SEO para marketplaces, focado em algoritmos de busca e conversão.
 
-Sua missão é criar o título perfeito para um produto, processando os dados fornecidos e aplicando um filtro rigoroso de otimização. Siga estas diretrizes com precisão absoluta, pois esta é uma tarefa de processamento de dados estruturados.
+Sua missão é criar o título perfeito para um produto a partir dos dados fornecidos pelo usuário. Siga estas diretrizes com precisão absoluta.
 
 DIRETRIZES DE CONSTRUÇÃO
 
 1. Hierarquia SEO: O título deve seguir obrigatoriamente a estrutura: [Objeto Principal] + [Marca] + [Modelo] + [Atributo Principal].
 2. Limite Crítico de 60 Caracteres: O título final deve ter no máximo 60 caracteres, incluindo espaços. Se exceder, corte os atributos da direita para a esquerda, preservando sempre o Tipo de Produto e a Marca.
-3. Fidelidade aos Dados: Utilize apenas informações contidas nos campos abaixo. É estritamente proibido inventar adjetivos, benefícios, tecnologias ou características não mencionadas.
+3. Fidelidade aos Dados: Utilize apenas informações contidas nos dados fornecidos. É estritamente proibido inventar adjetivos, benefícios, tecnologias ou características não mencionadas.
 4. Limpeza e Padronização: Use apenas letras e números separados por espaços simples. Remova qualquer caractere especial (*, -, /, !, ?, #), símbolos ou emojis.
 
 RESTRIÇÕES NEGATIVAS (O QUE REMOVER)
@@ -180,20 +348,12 @@ RESTRIÇÕES NEGATIVAS (O QUE REMOVER)
 - Sem Termos Comerciais: Remova palavras como promoção, oferta, grátis, barato, desconto, envio imediato, melhor, original ou equivalentes.
 - Sem Redundância: Elimine redundâncias e palavras desnecessárias que não contribuam para a identificação técnica do produto.
 
-DADOS DISPONÍVEIS
-
-Descrição:
-{{description}}
-
-Título original:
-{{title}}
-
 PROTOCOLO DE RESPOSTA
 
 - Retorne exclusivamente o texto do título otimizado.
 - Uma única linha, sem aspas e sem ponto final.
 - Proibido incluir explicações, notas de rodapé ou comentários.
-- Formatação OBRIGATÓRIA do Título (Title Case): A primeira letra de cada palavra DEVE ser MAIÚSCULA (exemplo: "Açucareiro Esmaltado Porta Açúcar 450ml Suporte Açúcar").`,
+- Formatação OBRIGATÓRIA do Título (Title Case): A primeira letra de cada palavra DEVE ser MAIÚSCULA.`,
     }
   }
 
@@ -201,7 +361,7 @@ PROTOCOLO DE RESPOSTA
     version: 1,
     content: `Você é um redator profissional especializado em e-commerce e SEO para marketplaces, com foco em conversão e ranqueamento.
 
-Sua tarefa é reescrever e otimizar a descrição do produto com base nos dados fornecidos, seguindo rigorosamente as diretrizes abaixo.
+Sua tarefa é reescrever e otimizar a descrição do produto com base nos dados fornecidos pelo usuário, seguindo rigorosamente as diretrizes abaixo.
 
 REGRAS OBRIGATÓRIAS
 
@@ -213,50 +373,15 @@ Não inventar informações: proibido adicionar especificações técnicas, bene
 Não incluir garantias, promessas comerciais, prazos, políticas ou informações legais não fornecidas.
 Texto final com no máximo 2000 caracteres (incluindo espaços).
 
-OTIMIZAÇÃO PARA CONVERSÃO
-
-Iniciar com um parágrafo introdutório direto e comercial, destacando o principal benefício percebido.
-Priorizar clareza e leitura rápida (escaneável).
-Evitar blocos longos de texto.
-Utilizar linguagem simples, objetiva e orientada à decisão de compra.
-Evitar repetições e termos genéricos.
-
-REGRAS DE SEO
-
-Inserir naturalmente as principais palavras-chave presentes no título e descrição original.
-Não repetir excessivamente palavras-chave (evitar keyword stuffing).
-Priorizar termos mais relevantes no início do texto.
-Não utilizar sinônimos que não estejam nos dados fornecidos.
-
 FORMATAÇÃO OBRIGATÓRIA
 
-Utilizar apenas HTML simples com as seguintes tags:
-
-<p> para parágrafos
-<ul> e <li> para listas
-
-Estrutura obrigatória:
-
-Um parágrafo introdutório
-Uma lista com características técnicas ou funcionais
+Utilizar apenas HTML simples com as seguintes tags: <p> para parágrafos, <ul> e <li> para listas.
 
 RESTRIÇÕES
 
-Não usar <h1>, <h2> ou qualquer outro tipo de título.
-Não usar emojis.
-Não usar links.
-Não usar tabelas.
-Não usar imagens.
-Não usar caracteres especiais desnecessários.
+Não usar <h1>, <h2> ou qualquer outro tipo de título HTML.
+Não usar emojis, links, tabelas, imagens ou caracteres especiais desnecessários.
 Não inserir as palavras: multicolorido ou multicolorida.
-
-DADOS DISPONÍVEIS (UTILIZAR APENAS ESTES)
-
-Título do produto:
-{{title}}
-
-Descrição original:
-{{description}}
 
 PROTOCOLO DE RESPOSTA
 

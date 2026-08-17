@@ -40,9 +40,9 @@ export default function LogPanel() {
   const toggleCollapse = (key) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
 
   const handleExport = () => {
-    if (!logs.length) { addToast('info', 'Nenhum log para exportar.'); return }
+    if (!logs.length) { addToast('info', 'Ainda não há nada para exportar.'); return }
     exportLogsToXlsx(logs)
-    addToast('success', 'Arquivo XLSX exportado com sucesso.')
+    addToast('success', 'Pronto! Planilha exportada.')
   }
 
   const handleUndoAll = async () => {
@@ -63,7 +63,7 @@ export default function LogPanel() {
       await sleep(1500)
     }
     setUndoingAll(false)
-    addToast('success', `${ok} produto(s) revertidos com sucesso.`)
+    addToast('success', `Pronto! ${ok} anúncio(s) revertido(s).`)
   }
 
   return (

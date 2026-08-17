@@ -7,6 +7,7 @@ import { patchProduct } from '../services/anymarketService'
 import { exportReviewToXlsx, exportBlockedProductsToXlsx } from '../services/excelService'
 import { parallelProcess } from '../utils/batchUtils'
 import { playCompletionSound, showBrowserNotification } from '../utils/notificationUtils'
+import { collectViolations, countProductsNeedingAttention } from '../utils/validationUtils'
 import { canPatchProduct } from './ProductTable'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -60,6 +61,7 @@ export default function ReviewPanel() {
   const setApplying          = useStore((s) => s.setApplying)
   const setProgress          = useStore((s) => s.setProgress)
   const setTab               = useStore((s) => s.setTab)
+  const removeProducts       = useStore((s) => s.removeProducts)
 
   const [selected, setSelected]       = useState([])
   const [fieldSel, setFieldSel]       = useState({})
@@ -77,6 +79,7 @@ export default function ReviewPanel() {
 
   const isLoading     = ui.isProcessing || ui.isApplying
   const isAllSelected = reviewable.length > 0 && reviewable.every((p) => selected.includes(p.id))
+  const attentionCount = countProductsNeedingAttention(reviewable)
 
   const toggleSelect = (id) => setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   const selectAll   = () => setSelected(reviewable.map((p) => p.id))
@@ -165,7 +168,13 @@ export default function ReviewPanel() {
     }
   }
 
-  const handleApproveSelected = async () => {
+  /**
+   * "Só aprovar" — registra o endosso para o aprendizado e dispensa da fila,
+   * SEM publicar na AnyMarket. Caminho secundário: serve para produtos
+   * 🔒 bloqueados (que não podem receber PATCH) e para quando o operador não
+   * quer publicar agora. O caminho principal é handleApproveAndPublish.
+   */
+  const handleApproveOnly = async () => {
     const targets = reviewable.filter((p) => selected.includes(p.id))
     if (!targets.length) { addToast('warning', 'Selecione ao menos um produto.'); return }
 
@@ -192,7 +201,33 @@ export default function ReviewPanel() {
     }
 
     setFeedbackState((prev) => ({ ...prev, ...updatedMap }))
-    addToast('success', `${targets.length} produto(s) aprovado(s)! A IA usará esses exemplos no aprendizado futuro.`)
+
+    // Remover os produtos aprovados da lista de revisão
+    const approvedIds = targets.map((p) => p.id)
+    removeProducts(approvedIds)
+    setSelected((prev) => prev.filter((id) => !approvedIds.includes(id)))
+
+    addToast(
+      'info',
+      `Aprovado para aprendizado — ${targets.length} anúncio(s) saíram da fila sem ir para a AnyMarket.`
+    )
+  }
+
+  /** Remove da fila os produtos aprovados campo a campo pelos botões ✅ dos cards. */
+  const handleClearApproved = () => {
+    const approvedIds = reviewable
+      .filter((p) => {
+        const tf = p.titleGenerationId ? feedbackState[p.titleGenerationId] : null
+        const df = p.descGenerationId ? feedbackState[p.descGenerationId] : null
+        return tf === 'approved' || df === 'approved'
+      })
+      .map((p) => p.id)
+
+    if (!approvedIds.length) return
+
+    removeProducts(approvedIds)
+    setSelected((prev) => prev.filter((id) => !approvedIds.includes(id)))
+    addToast('info', `${approvedIds.length} produto(s) aprovado(s) saíram da fila.`)
   }
 
   const handleRedoSingle = async (product) => {
@@ -211,47 +246,133 @@ export default function ReviewPanel() {
           fields.includes('title') ? (r.newTitle ?? product.newTitle ?? '') : (product.newTitle ?? ''),
           fields.includes('description') ? (r.newDescription ?? product.newDescription ?? '') : (product.newDescription ?? ''),
           r.titleGenerationId ?? product.titleGenerationId,
-          r.descGenerationId ?? product.descGenerationId
+          r.descGenerationId ?? product.descGenerationId,
+          {
+            titleValidation: r.titleValidation,
+            descValidation: r.descValidation,
+            titleRulesApplied: r.titleRulesApplied,
+            descRulesApplied: r.descRulesApplied,
+          }
         )
-        addToast('success', `IA refeita para produto ${r.id}.`)
+        const violations = [
+          ...(r.titleValidation?.violations ?? []),
+          ...(r.descValidation?.violations ?? []),
+        ]
+        if (violations.length > 0) {
+          addToast('warning', `Refiz o anúncio — ainda há ${violations.length} ponto(s) para revisar.`)
+        } else {
+          addToast('success', 'Pronto! Anúncio refeito.')
+        }
       }
     } catch (e) { updateProductStatus(product.id, 'error'); addToast('error', 'Erro: ' + e.message) }
     finally { setProcessing(false); setProgress(0, 0) }
+  }
+
+  const cancelProcessRef = useState({ current: false })[0]
+
+  const handleCancelAI = () => {
+    cancelProcessRef.current = true
+    setProcessing(false)
+    const currentProducts = useStore.getState().products
+    currentProducts.forEach((p) => {
+      if (p.status === 'processing') {
+        updateProductStatus(p.id, 'processed')
+      }
+    })
+    addToast('info', 'Processamento da IA interrompido.')
   }
 
   const handleRedoSelected = async () => {
     const targets = reviewable.filter((p) => selected.includes(p.id))
     if (!targets.length) { addToast('warning', 'Selecione ao menos um produto.'); return }
     const fieldsMap = Object.fromEntries(targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))]))
+    
+    cancelProcessRef.current = false
     targets.forEach((p) => updateProductStatus(p.id, 'processing'))
     setProcessing(true)
     setProgress(0, targets.length)
-    await parallelProcess(targets, CONCURRENCY, async (p) => {
-      const fields = fieldsMap[p.id]
-      if (!fields?.length) return
-      try {
-        const results = await processProductsWithAI([p], fields)
-        const r = results[0]
-        if (r.error) updateProductStatus(r.id, 'error')
-        else updateProductResult(r.id,
-          fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
-          fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
-          r.titleGenerationId ?? p.titleGenerationId,
-          r.descGenerationId ?? p.descGenerationId
-        )
-      } catch (e) { updateProductStatus(p.id, 'error') }
-    }, (done, total) => setProgress(done, total))
+
+    let needAttention = 0
+
+    await parallelProcess(
+      targets,
+      CONCURRENCY,
+      async (p) => {
+        if (cancelProcessRef.current) {
+          updateProductStatus(p.id, 'processed')
+          return
+        }
+        const fields = fieldsMap[p.id]
+        if (!fields?.length) return
+        try {
+          const results = await processProductsWithAI([p], fields)
+          if (cancelProcessRef.current) {
+            updateProductStatus(p.id, 'processed')
+            return
+          }
+          const r = results[0]
+          if (r.error) updateProductStatus(r.id, 'error')
+          else {
+            updateProductResult(r.id,
+              fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
+              fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
+              r.titleGenerationId ?? p.titleGenerationId,
+              r.descGenerationId ?? p.descGenerationId,
+              {
+                titleValidation: r.titleValidation,
+                descValidation: r.descValidation,
+                titleRulesApplied: r.titleRulesApplied,
+                descRulesApplied: r.descRulesApplied,
+              }
+            )
+            const violations = [
+              ...(r.titleValidation?.violations ?? []),
+              ...(r.descValidation?.violations ?? []),
+            ]
+            if (violations.length > 0) needAttention++
+          }
+        } catch (e) {
+          if (!cancelProcessRef.current) updateProductStatus(p.id, 'error')
+        }
+      },
+      (done, total) => {
+        if (!cancelProcessRef.current) setProgress(done, total)
+      },
+      () => cancelProcessRef.current
+    )
+
+    if (cancelProcessRef.current) {
+      setProcessing(false)
+      return
+    }
+
     setProcessing(false)
-    addToast('success', `IA refeita para ${targets.length} produto(s).`)
-    if (config.soundNotification) { playCompletionSound(); showBrowserNotification('IA Concluída', `${targets.length} produtos reprocessados.`) }
+
+    if (needAttention > 0) {
+      addToast('warning', `Refiz ${targets.length} anúncio(s) — ${needAttention} ainda precisa(m) de atenção.`)
+    } else {
+      addToast('success', `Pronto! ${targets.length} anúncio(s) refeito(s).`)
+    }
+    if (config.soundNotification) {
+      playCompletionSound()
+      showBrowserNotification('Pronto! Anúncios refeitos.', `${targets.length} anúncio(s) atualizados.`)
+    }
   }
 
-  const handleApplySelected = async () => {
+  /**
+   * Caminho principal — aprova E publica.
+   *
+   * A aprovação é gravada pelo próprio backend em POST /api/anymarket/patch:
+   * publicar já é o endosso humano, então as gerações com feedbackStatus
+   * 'pending' são promovidas para 'approved' lá. Aqui só refletimos isso no
+   * estado local para os cards mostrarem o selo.
+   */
+  const handleApproveAndPublish = async () => {
     const allTargets = reviewable.filter((p) => selected.includes(p.id) && p.status === 'processed')
-    if (!allTargets.length) { addToast('info', 'Nenhum produto "Processado" selecionado.'); return }
+    if (!allTargets.length) { addToast('info', 'Nenhum produto pronto para publicar entre os selecionados.'); return }
 
     const token = activeClient?.anymarket_token || config.gumgaToken
-    if (!token) { setConfigOpen(true); addToast('warning', 'Configure o token AnyMarket para este cliente.'); return }
+    if (!token) { setConfigOpen(true); addToast('warning', 'Configure o token da AnyMarket para este cliente.'); return }
 
     const blocked = allTargets.filter((p) => !canPatchProduct(p))
     const targets = allTargets.filter((p) => canPatchProduct(p))
@@ -289,6 +410,17 @@ export default function ReviewPanel() {
           genIds
         )
         updateProductStatus(p.id, 'applied')
+
+        // O backend promoveu as gerações 'pending' para 'approved' ao publicar.
+        // Refletimos aqui para o card mostrar o selo de aprovado.
+        setFeedbackState((prev) => {
+          const next = { ...prev }
+          for (const genId of genIds) {
+            if (!next[genId]) next[genId] = 'approved'
+          }
+          return next
+        })
+
         const changes = []
         if (fields.includes('title'))       changes.push({ field: 'TITULO',    before: p.title,       after: p.newTitle })
         if (fields.includes('description')) changes.push({ field: 'DESCRIÇÃO', before: p.description, after: p.newDescription })
@@ -296,10 +428,24 @@ export default function ReviewPanel() {
       } catch (e) { updateProductStatus(p.id, 'error'); addToast('error', `Erro ${p.id}: ` + e.message) }
     }, (done, total) => setProgress(done, total))
     setApplying(false)
-    addToast('success', `${targets.length} produto(s) enviados para a AnyMarket.`)
-    if (config.soundNotification) { playCompletionSound(); showBrowserNotification('Aplicação concluída', `${targets.length} produtos aplicados na AnyMarket.`) }
-    setSelected((prev) => prev.filter((id) => { const p = products.find((x) => x.id === id); return p && p.status !== 'applied' }))
-    const stillPending = products.filter((p) => ['processed', 'error'].includes(p.status))
+
+    addToast('success', `Pronto! ${targets.length} anúncio(s) publicado(s) na AnyMarket e aprovado(s) para aprendizado.`)
+    if (config.soundNotification) {
+      playCompletionSound()
+      showBrowserNotification(
+        'Pronto! Anúncios publicados.',
+        `${targets.length} anúncio(s) no ar na AnyMarket.`
+      )
+    }
+
+    // Ler o estado fresco do store — `products` do closure ficou defasado
+    // depois dos updateProductStatus acima.
+    const currentProducts = useStore.getState().products
+    setSelected((prev) => prev.filter((id) => {
+      const p = currentProducts.find((x) => x.id === id)
+      return p && p.status !== 'applied'
+    }))
+    const stillPending = currentProducts.filter((p) => ['processed', 'error'].includes(p.status))
     if (!stillPending.length) setTab('logs')
   }
 
@@ -358,6 +504,14 @@ export default function ReviewPanel() {
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
                 {reviewable.length} produto(s)
               </span>
+              {attentionCount > 0 && (
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/15 border border-amber-500/30 text-amber-300"
+                  title="Produtos com alguma regra do cliente violada"
+                >
+                  ⚠️ {attentionCount} para revisar
+                </span>
+              )}
             </div>
 
             <div className="h-5 w-px bg-slate-800 hidden sm:block" />
@@ -400,65 +554,82 @@ export default function ReviewPanel() {
           </div>
         </div>
 
-        {/* Linha Inferior da Toolbar: Botões de Ação em Lote */}
+        {/* Linha Inferior da Toolbar: Ação principal + ações secundárias */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="text-xs text-slate-400 font-medium">
             {selected.length > 0 ? (
               <span className="text-indigo-400 font-bold">
-                {selected.length} produto(s) selecionado(s) para ação em lote
+                {selected.length} produto(s) selecionado(s)
               </span>
             ) : (
-              <span>Selecione itens nos cards abaixo para aprovar ou aplicar em lote</span>
+              <span>Selecione itens nos cards abaixo para agir em lote</span>
             )}
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
-            {/* Aprovar Selecionados */}
+            {/* Ações secundárias */}
             <button
-              onClick={handleApproveSelected}
+              onClick={handleApproveOnly}
               disabled={!selected.length}
-              className="px-4 py-2 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              title="Registra a aprovação para o CRIA aprender, mas NÃO envia para a AnyMarket. Use em produtos bloqueados ou quando não quiser publicar agora."
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
             >
-              <span>✅ Aprovar Selecionados</span>
+              <span>Só aprovar</span>
               {selected.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white">
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/10 text-slate-300">
                   {selected.length}
                 </span>
               )}
             </button>
 
-            {/* Exportar Planilha */}
-            <button
-              onClick={() => { exportReviewToXlsx(reviewable); addToast('success', 'Planilha exportada com sucesso.') }}
-              disabled={!reviewable.length}
-              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-all disabled:opacity-40 flex items-center gap-1.5"
-            >
-              <span>📥 Exportar Planilha</span>
-            </button>
-
-            {/* Refazer IA */}
             <button
               onClick={handleRedoSelected}
               disabled={isLoading || !selected.length}
-              className="px-4 py-2 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all disabled:opacity-40 flex items-center gap-1.5"
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-all disabled:opacity-40 flex items-center gap-1.5"
             >
-              <span>🔄 Refazer IA</span>
+              <span>🔄 Refazer</span>
               {selected.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white">
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/10 text-slate-300">
                   {selected.length}
                 </span>
               )}
             </button>
 
-            {/* Aplicar AnyMarket */}
             <button
-              onClick={handleApplySelected}
-              disabled={isLoading || !selected.length}
-              className="px-4 py-2 rounded-xl text-xs font-extrabold bg-teal-600 hover:bg-teal-500 text-white shadow-md shadow-teal-600/30 transition-all disabled:opacity-40 flex items-center gap-1.5"
+              onClick={() => { exportReviewToXlsx(reviewable); addToast('success', 'Pronto! Planilha exportada.') }}
+              disabled={!reviewable.length}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-all disabled:opacity-40 flex items-center gap-1.5"
             >
-              <span>🚀 Aplicar AnyMarket</span>
+              <span>📥 Planilha</span>
+            </button>
+
+            {/* Limpa da fila os itens aprovados campo a campo (botões ✅ dos cards) */}
+            {Object.values(feedbackState).some((v) => v === 'approved') && (
+              <button
+                onClick={handleClearApproved}
+                title="Remove da fila os produtos que você já aprovou nos cards"
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-900/40 hover:bg-emerald-800/60 border border-emerald-700/50 text-emerald-300 transition-all flex items-center gap-1.5"
+              >
+                <span>🧹 Limpar aprovados</span>
+              </button>
+            )}
+
+            <div className="h-6 w-px bg-slate-700 mx-0.5 hidden sm:block" />
+
+            {/* Ação principal: aprova E publica */}
+            <button
+              onClick={handleApproveAndPublish}
+              disabled={isLoading || !selected.length}
+              title="Aprova (o CRIA aprende) e envia para a AnyMarket"
+              className="px-5 py-2.5 rounded-xl text-xs font-extrabold text-white shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              style={{
+                background: 'linear-gradient(135deg, #336cff, #6337f1)',
+                boxShadow: '0 4px 20px rgba(51,108,255,0.35)',
+              }}
+            >
+              <span>🚀 Aprovar e publicar</span>
               {selected.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white">
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/25 text-white">
                   {selected.length}
                 </span>
               )}
@@ -466,6 +637,30 @@ export default function ReviewPanel() {
           </div>
         </div>
       </div>
+
+      {/* Barra de Progresso com Botão de Cancelar */}
+      {isLoading && (ui.progress?.total ?? 0) > 0 && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex-1">
+            <ProcessingBar
+              current={ui.progress?.current ?? 0}
+              total={ui.progress?.total ?? 0}
+              label={ui.isProcessing ? 'Processando com IA...' : 'Aplicando no AnyMarket...'}
+            />
+          </div>
+          {ui.isProcessing && (
+            <button
+              type="button"
+              onClick={handleCancelAI}
+              className="px-4 py-2.5 rounded-xl text-xs font-extrabold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 hover:border-rose-500 shadow-md transition-all flex items-center justify-center gap-2 shrink-0 animate-pulse"
+              title="Interromper geração de anúncios imediatamente"
+            >
+              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+              <span>⏹️ Cancelar Processamento</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Banner de Produtos Bloqueados */}
       {showBlockedBanner && (
@@ -486,7 +681,7 @@ export default function ReviewPanel() {
 
             <div className="px-5 space-y-3">
               <p className="text-xs text-slate-300 leading-relaxed">
-                Esses produtos possuem um <strong className="text-amber-400">Cálculo de Preço</strong> não suportado pela API da AnyMarket. Para alterá-los, baixe a planilha e faça as edições manualmente.
+                Esses produtos possuem um <strong className="text-amber-400">Cálculo de Preço</strong> não suportado pela API da AnyMarket. Para alterá-los, baixe a planilha e faça as edições manualmente — depois use <strong className="text-slate-200">Só aprovar</strong> para o CRIA aprender com eles.
               </p>
 
               <div className="rounded-xl border border-slate-800 overflow-hidden max-h-44 overflow-y-auto">
@@ -531,9 +726,10 @@ export default function ReviewPanel() {
                 {pendingTargets.length > 0 && (
                   <button
                     onClick={handleConfirmApplyAllowed}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-500 text-white shadow-md"
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white shadow-md"
+                    style={{ background: 'linear-gradient(135deg, #336cff, #6337f1)' }}
                   >
-                    🚀 Aplicar {pendingTargets.length} Permitido(s)
+                    🚀 Publicar {pendingTargets.length} liberado(s)
                   </button>
                 )}
                 <button
@@ -574,6 +770,7 @@ export default function ReviewPanel() {
           const descGenId = p.descGenerationId
           const titleFeedback = titleGenId ? feedbackState[titleGenId] : null
           const descFeedback = descGenId ? feedbackState[descGenId] : null
+          const violations = collectViolations(p)
 
           return (
             <div
@@ -651,6 +848,29 @@ export default function ReviewPanel() {
                   </button>
                 </div>
               </div>
+
+              {/* Avisos do CRIA — violações de regra detectadas na geração */}
+              {violations.length > 0 && (
+                <div className="px-5 py-3 border-b border-amber-500/20 bg-amber-500/[0.07] space-y-1.5">
+                  <p className="text-[11px] font-extrabold text-amber-300 flex items-center gap-1.5">
+                    <span>⚠️</span>
+                    <span>
+                      Encontrei {violations.length} ponto{violations.length > 1 ? 's' : ''} que precisa
+                      {violations.length > 1 ? 'm' : ''} de revisão
+                    </span>
+                  </p>
+                  <ul className="space-y-1">
+                    {violations.map((v, i) => (
+                      <li key={i} className="text-[11px] text-slate-300 flex items-start gap-1.5 leading-snug">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase shrink-0 bg-slate-950 border border-slate-700 text-slate-400">
+                          {v.field === 'titulo' ? 'Título' : 'Descrição'}
+                        </span>
+                        <span>{v.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Título (Antes vs Depois) */}
               {fsel.titulo && (
@@ -826,7 +1046,12 @@ export default function ReviewPanel() {
         })}
       </div>
 
-      <FloatingActionBar onProcess={handleRedoSelected} onApply={handleApplySelected} disabled={isLoading} />
+      <FloatingActionBar
+        onProcess={handleRedoSelected}
+        onApply={handleApproveAndPublish}
+        onCancel={handleCancelAI}
+        disabled={isLoading}
+      />
     </div>
   )
 }

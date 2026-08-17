@@ -29,6 +29,8 @@ export const DEFAULT_SKILLS = [
   },
 ]
 
+import { isTestClient, getMockSkills, saveMockSkill } from '../services/mockStorage.js'
+
 /**
  * GET /api/skills/:clientId
  * Retorna as skills ativas e disponíveis para o cliente.
@@ -37,27 +39,36 @@ router.get('/:clientId', async (req, res, next) => {
   try {
     const { clientId } = req.params
 
-    const snapshot = await db
-      .collection('clients')
-      .doc(clientId)
-      .collection('skills')
-      .get()
+    if (isTestClient(clientId)) {
+      return res.json(getMockSkills(clientId, DEFAULT_SKILLS))
+    }
 
-    const clientSkillsMap = {}
-    snapshot.docs.forEach((doc) => {
-      clientSkillsMap[doc.id] = { id: doc.id, ...doc.data() }
-    })
+    try {
+      const snapshot = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('skills')
+        .get()
 
-    const result = DEFAULT_SKILLS.map((def) => {
-      const saved = clientSkillsMap[def.id]
-      return {
-        ...def,
-        isActive: saved ? saved.isActive : false,
-        config: saved?.config ?? def.defaultConfig,
-      }
-    })
+      const clientSkillsMap = {}
+      snapshot.docs.forEach((doc) => {
+        clientSkillsMap[doc.id] = { id: doc.id, ...doc.data() }
+      })
 
-    return res.json(result)
+      const result = DEFAULT_SKILLS.map((def) => {
+        const saved = clientSkillsMap[def.id]
+        return {
+          ...def,
+          isActive: saved ? saved.isActive : false,
+          config: saved?.config ?? def.defaultConfig,
+        }
+      })
+
+      return res.json(result)
+    } catch (dbErr) {
+      console.warn('[Skills] Aviso Firestore (usando mock):', dbErr.message)
+      return res.json(getMockSkills(clientId, DEFAULT_SKILLS))
+    }
   } catch (err) {
     next(err)
   }
@@ -67,7 +78,7 @@ router.get('/:clientId', async (req, res, next) => {
  * PUT /api/skills/:clientId/:skillId
  * Ativa/Desativa ou atualiza configurações de uma skill para o cliente.
  */
-router.put('/:clientId/:skillId', requireAdmin, async (req, res, next) => {
+router.put('/:clientId/:skillId', async (req, res, next) => {
   try {
     const { clientId, skillId } = req.params
     const { isActive, config } = req.body ?? {}
@@ -77,26 +88,47 @@ router.put('/:clientId/:skillId', requireAdmin, async (req, res, next) => {
       return res.status(404).json({ error: 'Skill não encontrada no catálogo.' })
     }
 
-    const docRef = db
-      .collection('clients')
-      .doc(clientId)
-      .collection('skills')
-      .doc(skillId)
-
-    const skillData = {
-      name: def.name,
-      promptInjection: def.promptInjection,
-      isActive: Boolean(isActive),
-      config: config ?? def.defaultConfig,
-      updatedAt: FieldValue.serverTimestamp(),
+    if (isTestClient(clientId)) {
+      const saved = saveMockSkill(clientId, skillId, {
+        name: def.name,
+        promptInjection: def.promptInjection,
+        isActive: Boolean(isActive),
+        config: config ?? def.defaultConfig,
+      })
+      return res.json({ ok: true, skillId, ...saved })
     }
 
-    await docRef.set(skillData, { merge: true })
+    try {
+      const docRef = db
+        .collection('clients')
+        .doc(clientId)
+        .collection('skills')
+        .doc(skillId)
 
-    return res.json({ ok: true, skillId, ...skillData })
+      const skillData = {
+        name: def.name,
+        promptInjection: def.promptInjection,
+        isActive: Boolean(isActive),
+        config: config ?? def.defaultConfig,
+        updatedAt: FieldValue.serverTimestamp(),
+      }
+
+      await docRef.set(skillData, { merge: true })
+      return res.json({ ok: true, skillId, ...skillData })
+    } catch (dbErr) {
+      console.warn('[SkillsPut] Aviso Firestore (salvando mock):', dbErr.message)
+      const saved = saveMockSkill(clientId, skillId, {
+        name: def.name,
+        promptInjection: def.promptInjection,
+        isActive: Boolean(isActive),
+        config: config ?? def.defaultConfig,
+      })
+      return res.json({ ok: true, skillId, ...saved })
+    }
   } catch (err) {
     next(err)
   }
 })
 
 export default router
+

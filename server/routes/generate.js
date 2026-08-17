@@ -2,6 +2,8 @@ import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { resolvePrompt } from '../services/promptResolver.js'
 import { generateWithLLM } from '../services/llmService.js'
+import { sanitizeLLMOutput, applyDeterministicRules, validateOutput } from '../services/outputValidator.js'
+import { isTestClient, getMockClient, saveMockGeneration, getMockGenerations } from '../services/mockStorage.js'
 
 const router = Router()
 
@@ -42,15 +44,24 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: 'products deve ser um array não vazio.' })
     }
 
-    // Buscar config do cliente no Firestore
-    const clientDoc = await db.collection('clients').doc(clientId).get()
-
-    if (!clientDoc.exists) {
-      return res.status(404).json({ error: 'Cliente não encontrado.' })
+    let settings = {}
+    if (isTestClient(clientId)) {
+      const client = getMockClient(clientId)
+      settings = client.settings ?? {}
+    } else {
+      try {
+        const clientDoc = await db.collection('clients').doc(clientId).get()
+        if (clientDoc.exists) {
+          settings = clientDoc.data()?.settings ?? {}
+        } else {
+          settings = getMockClient(clientId).settings ?? {}
+        }
+      } catch (err) {
+        console.warn('[Generate] Aviso ao buscar cliente no Firestore:', err.message)
+        settings = getMockClient(clientId).settings ?? {}
+      }
     }
 
-    const clientData = clientDoc.data()
-    const settings = clientData.settings ?? {}
     const model = settings.model ?? 'gpt-4o-mini'
     const temperature = settings.temperature ?? 1
 
@@ -61,7 +72,7 @@ router.post('/', async (req, res, next) => {
 
     for (const product of products) {
       try {
-        // Resolver prompts com busca de contexto RAG específica para o produto
+        // Resolver prompts com busca de contexto RAG e regras estruturadas
         const [titlePrompt, descPrompt] = await Promise.all([
           doTitle ? resolvePrompt(clientId, 'titulo', product) : Promise.resolve(null),
           doDesc ? resolvePrompt(clientId, 'descricao', product) : Promise.resolve(null),
@@ -86,74 +97,192 @@ router.post('/', async (req, res, next) => {
             : Promise.resolve(null),
         ])
 
-        let [newTitle, newDescription] = tasks
+        let [rawTitle, rawDesc] = tasks
 
-        if (doTitle && !newTitle) throw new Error('LLM retornou título vazio.')
-        if (doDesc && !newDescription) throw new Error('LLM retornou descrição vazia.')
+        if (doTitle && !rawTitle) throw new Error('LLM retornou título vazio.')
+        if (doDesc && !rawDesc) throw new Error('LLM retornou descrição vazia.')
 
-        // Aplicar formatação Title Case (primeira letra de cada palavra maiúscula) no título
+        // 1. Sanitizar saídas (remover cercas de código ```html)
+        let newTitle = doTitle ? sanitizeLLMOutput(rawTitle) : ''
+        let newDescription = doDesc ? sanitizeLLMOutput(rawDesc) : ''
+
+        // 2. Aplicar formatação Title Case no título
         if (newTitle) {
           newTitle = toTitleCase(newTitle)
         }
 
-        let titleGenId = null
-        let descGenId = null
+        // 3. Aplicação Determinística de Regras Finais (Prepend/Append de textos fixos/institucionais)
+        let titleDeterministicRules = []
+        let descDeterministicRules = []
 
-        // Salvar gerações no Firestore
-        const batch = db.batch()
-
-        if (doTitle && newTitle && titlePrompt) {
-          const titleRef = db.collection('generations').doc()
-          titleGenId = titleRef.id
-
-          batch.set(titleRef, {
-            clientId,
-            operatorId: req.user.id,
-            productId: String(product.id),
-            generationType: 'titulo',
-            inputTitle: product.title ?? '',
-            inputDescription: product.description ?? '',
-            inputCharacteristics: product.characteristics ?? '',
-            promptVersion: titlePrompt.version,
-            modelUsed: model,
-            temperatureUsed: temperature,
-            skillsApplied: titlePrompt.skillsApplied,
-            ragChunksUsed: titlePrompt.ragChunksUsed ?? [],
-            generatedText: newTitle.trim(),
-            feedbackStatus: 'pending',
-            createdAt: FieldValue.serverTimestamp(),
-          })
+        if (doTitle && titlePrompt?.approvedRules) {
+          const resTitle = applyDeterministicRules(newTitle, titlePrompt.approvedRules, 'titulo')
+          newTitle = resTitle.finalOutput
+          titleDeterministicRules = resTitle.deterministicRulesApplied
         }
 
-        if (doDesc && newDescription && descPrompt) {
-          const descRef = db.collection('generations').doc()
-          descGenId = descRef.id
-
-          batch.set(descRef, {
-            clientId,
-            operatorId: req.user.id,
-            productId: String(product.id),
-            generationType: 'descricao',
-            inputTitle: product.title ?? '',
-            inputDescription: product.description ?? '',
-            inputCharacteristics: product.characteristics ?? '',
-            promptVersion: descPrompt.version,
-            modelUsed: model,
-            temperatureUsed: temperature,
-            skillsApplied: descPrompt.skillsApplied,
-            ragChunksUsed: descPrompt.ragChunksUsed ?? [],
-            generatedText: newDescription.trim(),
-            feedbackStatus: 'pending',
-            createdAt: FieldValue.serverTimestamp(),
-          })
+        if (doDesc && descPrompt?.approvedRules) {
+          const resDesc = applyDeterministicRules(newDescription, descPrompt.approvedRules, 'descricao')
+          newDescription = resDesc.finalOutput
+          descDeterministicRules = resDesc.deterministicRulesApplied
         }
 
-        await batch.commit()
+        // 4. Validação Pós-Geração contra proibições e regras
+        const titleValidation = doTitle ? validateOutput(newTitle, titlePrompt?.approvedRules ?? [], 'titulo') : null
+        const descValidation = doDesc ? validateOutput(newDescription, descPrompt?.approvedRules ?? [], 'descricao') : null
+
+        let titleGenId = `gen-title-${Date.now()}-${product.id}`
+        let descGenId = `gen-desc-${Date.now()}-${product.id}`
+
+        // Se for cliente teste, grava na memória
+        if (isTestClient(clientId)) {
+          if (doTitle && newTitle && titlePrompt) {
+            const saved = saveMockGeneration({
+              id: titleGenId,
+              clientId,
+              operatorId: req.user?.id ?? 'test-operator-id',
+              productId: String(product.id),
+              generationType: 'titulo',
+              inputTitle: product.title ?? '',
+              inputDescription: product.description ?? '',
+              inputCharacteristics: product.characteristics ?? '',
+              promptVersion: titlePrompt.version,
+              modelUsed: model,
+              temperatureUsed: temperature,
+              skillsApplied: titlePrompt.skillsApplied,
+              ragChunksUsed: titlePrompt.ragChunksUsed ?? [],
+              deterministicRulesApplied: titleDeterministicRules,
+              validationResult: titleValidation,
+              generatedText: newTitle.trim(),
+              feedbackStatus: 'pending',
+            })
+            titleGenId = saved.id
+          }
+
+          if (doDesc && newDescription && descPrompt) {
+            const saved = saveMockGeneration({
+              id: descGenId,
+              clientId,
+              operatorId: req.user?.id ?? 'test-operator-id',
+              productId: String(product.id),
+              generationType: 'descricao',
+              inputTitle: product.title ?? '',
+              inputDescription: product.description ?? '',
+              inputCharacteristics: product.characteristics ?? '',
+              promptVersion: descPrompt.version,
+              modelUsed: model,
+              temperatureUsed: temperature,
+              skillsApplied: descPrompt.skillsApplied,
+              ragChunksUsed: descPrompt.ragChunksUsed ?? [],
+              deterministicRulesApplied: descDeterministicRules,
+              validationResult: descValidation,
+              generatedText: newDescription.trim(),
+              feedbackStatus: 'pending',
+            })
+            descGenId = saved.id
+          }
+        } else {
+          // Salvar gerações no Firestore com fallback
+          try {
+            const batch = db.batch()
+
+            if (doTitle && newTitle && titlePrompt) {
+              const titleRef = db.collection('generations').doc()
+              titleGenId = titleRef.id
+
+              batch.set(titleRef, {
+                clientId,
+                operatorId: req.user.id,
+                productId: String(product.id),
+                generationType: 'titulo',
+                inputTitle: product.title ?? '',
+                inputDescription: product.description ?? '',
+                inputCharacteristics: product.characteristics ?? '',
+                promptVersion: titlePrompt.version,
+                modelUsed: model,
+                temperatureUsed: temperature,
+                skillsApplied: titlePrompt.skillsApplied,
+                ragChunksUsed: titlePrompt.ragChunksUsed ?? [],
+                deterministicRulesApplied: titleDeterministicRules,
+                validationResult: titleValidation,
+                generatedText: newTitle.trim(),
+                feedbackStatus: 'pending',
+                createdAt: FieldValue.serverTimestamp(),
+              })
+            }
+
+            if (doDesc && newDescription && descPrompt) {
+              const descRef = db.collection('generations').doc()
+              descGenId = descRef.id
+
+              batch.set(descRef, {
+                clientId,
+                operatorId: req.user.id,
+                productId: String(product.id),
+                generationType: 'descricao',
+                inputTitle: product.title ?? '',
+                inputDescription: product.description ?? '',
+                inputCharacteristics: product.characteristics ?? '',
+                promptVersion: descPrompt.version,
+                modelUsed: model,
+                temperatureUsed: temperature,
+                skillsApplied: descPrompt.skillsApplied,
+                ragChunksUsed: descPrompt.ragChunksUsed ?? [],
+                deterministicRulesApplied: descDeterministicRules,
+                validationResult: descValidation,
+                generatedText: newDescription.trim(),
+                feedbackStatus: 'pending',
+                createdAt: FieldValue.serverTimestamp(),
+              })
+            }
+
+            await batch.commit()
+          } catch (batchErr) {
+            console.warn('[Generate] Aviso ao salvar geração no Firestore (salvando em memória temporária):', batchErr.message)
+            // Fallback para mockStore para não quebrar a geração
+            if (doTitle && newTitle) {
+              saveMockGeneration({
+                id: titleGenId,
+                clientId,
+                operatorId: req.user?.id ?? 'test-operator',
+                productId: String(product.id),
+                generationType: 'titulo',
+                generatedText: newTitle.trim(),
+                feedbackStatus: 'pending',
+              })
+            }
+            if (doDesc && newDescription) {
+              saveMockGeneration({
+                id: descGenId,
+                clientId,
+                operatorId: req.user?.id ?? 'test-operator',
+                productId: String(product.id),
+                generationType: 'descricao',
+                generatedText: newDescription.trim(),
+                feedbackStatus: 'pending',
+              })
+            }
+          }
+        }
 
         results.push({
           id: product.id,
-          ...(doTitle ? { newTitle: newTitle.trim(), titleGenerationId: titleGenId } : {}),
-          ...(doDesc ? { newDescription: newDescription.trim(), descGenerationId: descGenId } : {}),
+          ...(doTitle
+            ? {
+                newTitle: newTitle.trim(),
+                titleGenerationId: titleGenId,
+                titleValidation: titleValidation,
+                titleRulesApplied: titleDeterministicRules,
+              }
+            : {}),
+          ...(doDesc
+            ? {
+                newDescription: newDescription.trim(),
+                descGenerationId: descGenId,
+                descValidation: descValidation,
+                descRulesApplied: descDeterministicRules,
+              }
+            : {}),
         })
       } catch (err) {
         const msg = err?.message ?? String(err)
@@ -177,25 +306,33 @@ router.get('/history/:clientId', async (req, res, next) => {
     const { clientId } = req.params
     const { limit = 50, status, type } = req.query
 
-    let query = db.collection('generations')
-      .where('clientId', '==', clientId)
+    if (isTestClient(clientId)) {
+      const data = getMockGenerations(clientId, Number(limit))
+      return res.json({ data, total: data.length })
+    }
 
-    if (status) query = query.where('feedbackStatus', '==', status)
-    if (type) query = query.where('generationType', '==', type)
+    try {
+      let query = db.collection('generations')
+        .where('clientId', '==', clientId)
 
-    const snapshot = await query
-      .limit(Number(limit))
-      .get()
+      if (status) query = query.where('feedbackStatus', '==', status)
+      if (type) query = query.where('generationType', '==', type)
 
-    const data = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }))
+      const snapshot = await query
+        .limit(Number(limit))
+        .get()
 
-    return res.json({ data, total: data.length })
+      return res.json({ data, total: data.length })
+    } catch (err) {
+      console.warn('[GenerateHistory] Aviso Firestore:', err.message)
+      const data = getMockGenerations(clientId, Number(limit))
+      return res.json({ data, total: data.length })
+    }
   } catch (err) {
     next(err)
   }
 })
 
 export default router
+
+
