@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { resolvePrompt } from '../services/promptResolver.js'
 import { generateWithLLM } from '../services/llmService.js'
-import { sanitizeLLMOutput, applyDeterministicRules, validateOutput } from '../services/outputValidator.js'
+import { sanitizeLLMOutput, applyDeterministicRules, validateOutput, enforceMaxLength } from '../services/outputValidator.js'
 import { isTestClient, getMockClient, saveMockGeneration, getMockGenerations } from '../services/mockStorage.js'
 
 const router = Router()
@@ -127,8 +127,19 @@ router.post('/', async (req, res, next) => {
           descDeterministicRules = resDesc.deterministicRulesApplied
         }
 
+        // 3.1 Skill "Limite de Caracteres do Título" — rede de segurança determinística,
+        // já que o LLM pode não respeitar o limite mesmo quando instruído no prompt.
+        const titleMaxLengthConfig = titlePrompt?.activeSkillsConfig?.title_max_length
+        if (doTitle && titleMaxLengthConfig?.maxLength) {
+          newTitle = enforceMaxLength(newTitle, Number(titleMaxLengthConfig.maxLength))
+        }
+
         // 4. Validação Pós-Geração contra proibições e regras
-        const titleValidation = doTitle ? validateOutput(newTitle, titlePrompt?.approvedRules ?? [], 'titulo') : null
+        const titleValidation = doTitle
+          ? validateOutput(newTitle, titlePrompt?.approvedRules ?? [], 'titulo', {
+              maxLength: titleMaxLengthConfig?.maxLength ? Number(titleMaxLengthConfig.maxLength) : undefined,
+            })
+          : null
         const descValidation = doDesc ? validateOutput(newDescription, descPrompt?.approvedRules ?? [], 'descricao') : null
 
         let titleGenId = `gen-title-${Date.now()}-${product.id}`

@@ -111,10 +111,12 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   }
 
   // 3. Contexto da base de conhecimento do cliente (.md) — TODOS os chunks, em ordem.
+  // Só é injetado para 'descricao': o manual do cliente documenta estrutura/HTML da descrição,
+  // e despejar esse conteúdo no prompt de 'titulo' vaza instruções de descrição para o título.
   let ragChunksUsed = []
   let ragContextText = ''
 
-  if (!isMock) {
+  if (!isMock && promptType === 'descricao') {
     try {
       const chunksSnapshot = await db
         .collection('clients')
@@ -180,12 +182,19 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   }
 
   // 5. Buscar skills ativas do cliente
+  // Cada skill tem um `scope` ('titulo' | 'descricao' | 'ambos') no catálogo DEFAULT_SKILLS.
+  // Sem esse filtro, uma skill como 'html_spec_formatter' (que só faz sentido pra descrição)
+  // vazava sua instrução de formatação HTML pro prompt do título também.
+  const skillScopeById = Object.fromEntries(DEFAULT_SKILLS.map((s) => [s.id, s.scope || 'ambos']))
+  const matchesSkillScope = (scope) => !scope || scope === 'ambos' || scope === promptType
+
   const skillsApplied = []
+  const activeSkillsConfig = {}
   let activeSkillsInstructions = []
 
   if (isMock) {
     const mockSkills = getMockSkills(clientId, DEFAULT_SKILLS)
-    mockSkills.filter((s) => s.isActive).forEach((skill) => {
+    mockSkills.filter((s) => s.isActive && matchesSkillScope(s.scope)).forEach((skill) => {
       let injection = skill.promptInjection
       if (skill.config) {
         for (const [key, value] of Object.entries(skill.config)) {
@@ -194,6 +203,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
       }
       activeSkillsInstructions.push(injection)
       skillsApplied.push(skill.id)
+      activeSkillsConfig[skill.id] = skill.config
     })
   } else {
     try {
@@ -206,7 +216,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
 
       for (const doc of skillsSnapshot.docs) {
         const skill = doc.data()
-        if (skill.promptInjection) {
+        if (skill.promptInjection && matchesSkillScope(skillScopeById[doc.id])) {
           let injection = skill.promptInjection
           if (skill.config) {
             for (const [key, value] of Object.entries(skill.config)) {
@@ -218,12 +228,13 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
           }
           activeSkillsInstructions.push(injection)
           skillsApplied.push(doc.id)
+          activeSkillsConfig[doc.id] = skill.config
         }
       }
     } catch (err) {
       console.warn('[PromptResolver] Aviso ao buscar skills (usando fallback mock):', err.message)
       const mockSkills = getMockSkills(clientId, DEFAULT_SKILLS)
-      mockSkills.filter((s) => s.isActive).forEach((skill) => {
+      mockSkills.filter((s) => s.isActive && matchesSkillScope(s.scope)).forEach((skill) => {
         let injection = skill.promptInjection
         if (skill.config) {
           for (const [key, value] of Object.entries(skill.config)) {
@@ -232,6 +243,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
         }
         activeSkillsInstructions.push(injection)
         skillsApplied.push(skill.id)
+        activeSkillsConfig[skill.id] = skill.config
       })
     }
   }
@@ -282,6 +294,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     version: promptData.version ?? 1,
     fewShotExamples,
     skillsApplied,
+    activeSkillsConfig,
     ragChunksUsed,
     approvedRules,
   }

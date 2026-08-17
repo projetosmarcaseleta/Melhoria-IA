@@ -12,6 +12,7 @@ export const DEFAULT_SKILLS = [
     description: 'Impede estritamente a inclusão de palavras proibidas ou termos comerciais negativos.',
     promptInjection: 'REGRA DA SKILL (FILTRO DE TERMOS PROIBIDOS):\nÉ estritamente proibido utilizar as seguintes palavras ou variações no resultado: {{forbiddenWords}}. Se alguma dessas palavras estiver no input original, remova-a totalmente.',
     defaultConfig: { forbiddenWords: 'promoção, oferta, grátis, frete grátis, barato, desconto, envio imediato, melhor do mercado, original' },
+    scope: 'ambos',
   },
   {
     id: 'tone_of_voice',
@@ -19,6 +20,7 @@ export const DEFAULT_SKILLS = [
     description: 'Ajusta a personalidade da redação para o tom preferido do cliente.',
     promptInjection: 'REGRA DA SKILL (TOM DE VOZ):\nEscreva todo o conteúdo utilizando um tom de voz {{toneStyle}}. Adapte o vocabulário para esse perfil de público.',
     defaultConfig: { toneStyle: 'Técnico, Direto e Objetivo' }, // Opções: 'Técnico, Direto e Objetivo', 'Comercial e Persuasivo', 'Sofisticado e Premium'
+    scope: 'ambos',
   },
   {
     id: 'html_spec_formatter',
@@ -26,6 +28,15 @@ export const DEFAULT_SKILLS = [
     description: 'Força a estrutura HTML limpa com parágrafo inicial + lista <ul><li> para dados técnicos.',
     promptInjection: 'REGRA DA SKILL (PADRONIZADOR HTML):\nFormate a descrição obrigatoriamente como: 1) Um parágrafo <p> introdutório curto e direto. 2) Uma lista <ul> com itens <li> destacando as especificações do produto.',
     defaultConfig: {},
+    scope: 'descricao',
+  },
+  {
+    id: 'title_max_length',
+    name: '✂️ Limite de Caracteres do Título',
+    description: 'Garante que o título nunca exceda o limite de caracteres definido. Além de instruir a IA, o backend corta deterministicamente por palavra inteira caso o modelo estoure o limite.',
+    promptInjection: 'REGRA DA SKILL (LIMITE DE CARACTERES):\nO título final deve ter NO MÁXIMO {{maxLength}} caracteres, contando espaços. Se ultrapassar, remova palavras inteiras a partir do final até respeitar o limite — nunca corte no meio de uma palavra e nunca acrescente palavras novas.',
+    defaultConfig: { maxLength: 60 },
+    scope: 'titulo',
   },
 ]
 

@@ -188,6 +188,25 @@ export default function ClientSkillsManager() {
                       ✓ Padronizador HTML ativo: Garante formatação consistente com parágrafo introdutório e lista <code>&lt;ul&gt;&lt;li&gt;</code> em todas as descrições geradas.
                     </div>
                   )}
+
+                  {skill.id === 'title_max_length' && (
+                    <div>
+                      <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Limite Máximo de Caracteres do Título
+                      </label>
+                      <input
+                        type="number"
+                        min={10}
+                        max={200}
+                        value={skill.config?.maxLength ?? 60}
+                        onChange={(e) => handleConfigChange(skill.id, 'maxLength', Number(e.target.value))}
+                        className="input-dark text-xs w-28"
+                      />
+                      <p className="mt-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        Além de instruir a IA, o backend corta deterministicamente por palavra inteira se o título gerado exceder esse limite.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

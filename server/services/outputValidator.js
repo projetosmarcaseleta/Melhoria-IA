@@ -85,6 +85,42 @@ export const SCOPE_MAX_LENGTH = {
 }
 
 /**
+ * Garante deterministicamente que `text` não exceda `maxLength`.
+ *
+ * LLMs contam caracteres de forma pouco confiável mesmo quando instruídos
+ * explicitamente no prompt — por isso essa é uma rede de segurança aplicada
+ * no backend (skill 'title_max_length'), não uma substituição da instrução.
+ * Remove palavras inteiras a partir do final; nunca corta no meio de uma palavra
+ * e nunca acrescenta conteúdo novo.
+ *
+ * @param {string} text
+ * @param {number} maxLength
+ * @returns {string}
+ */
+export function enforceMaxLength(text, maxLength) {
+  if (!text || typeof text !== 'string') return text
+  const trimmed = text.trim()
+
+  if (!maxLength || trimmed.length <= maxLength) return trimmed
+
+  const words = trimmed.split(/\s+/)
+  let result = ''
+
+  for (const word of words) {
+    const candidate = result ? `${result} ${word}` : word
+    if (candidate.length > maxLength) break
+    result = candidate
+  }
+
+  // Uma única palavra já excede o limite — não há como cortar por palavra inteira.
+  if (!result) {
+    result = trimmed.slice(0, maxLength)
+  }
+
+  return result.replace(/[,;:\-–—]+$/, '').trim()
+}
+
+/**
  * Conta ocorrências de `needle` em `haystack` (comparação literal).
  */
 function countOccurrences(haystack, needle) {
