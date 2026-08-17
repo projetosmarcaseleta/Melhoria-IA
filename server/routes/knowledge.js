@@ -118,8 +118,6 @@ router.post('/:clientId', async (req, res, next) => {
   } catch (err) {
     next(err)
   }
-})t(err)
-  }
 })
 
 import {
