@@ -1,6 +1,12 @@
 import OpenAI from 'openai'
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+let client = null
+function getClient() {
+  if (!client) {
+    client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'test-key' })
+  }
+  return client
+}
 
 /**
  * Gera conteúdo usando o LLM.
@@ -33,7 +39,8 @@ export async function generateWithLLM({
     .filter(Boolean)
     .join('\n\n')
 
-  const response = await client.chat.completions.create({
+  const openai = getClient()
+  const response = await openai.chat.completions.create({
     model,
     temperature,
     messages: [

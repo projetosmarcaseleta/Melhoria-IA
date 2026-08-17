@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { requireAdmin } from '../middleware/auth.js'
+import { promptCache } from '../services/promptCache.js'
 
 const router = Router()
 
@@ -125,6 +126,7 @@ router.put('/:clientId/:skillId', async (req, res, next) => {
       }
 
       await docRef.set(skillData, { merge: true })
+      promptCache.invalidateClient(clientId)
       return res.json({ ok: true, skillId, ...skillData })
     } catch (dbErr) {
       console.warn('[SkillsPut] Aviso Firestore (salvando mock):', dbErr.message)
@@ -134,6 +136,7 @@ router.put('/:clientId/:skillId', async (req, res, next) => {
         isActive: Boolean(isActive),
         config: config ?? def.defaultConfig,
       })
+      promptCache.invalidateClient(clientId)
       return res.json({ ok: true, skillId, ...saved })
     }
   } catch (err) {

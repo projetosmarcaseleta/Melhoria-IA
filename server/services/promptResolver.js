@@ -7,18 +7,26 @@ import {
   getMockGenerations,
 } from './mockStorage.js'
 import { DEFAULT_SKILLS } from '../routes/skills.js'
+import { promptCache } from './promptCache.js'
 
 /**
  * Resolve o prompt final para um cliente + tipo de geração no Firestore.
  *
  * Lógica:
- * 1. Busca prompt ativo do cliente (doc path: clients/{clientId}/prompts/{type})
- * 2. Se não encontrar → usa prompt global default
- * 3. Enriquece com RAG (base de conhecimento .md do cliente via embedding similarity)
- * 4. Enriquece com few-shot examples de gerações aprovadas
- * 5. Enriquece com instruções de skills ativas
+ * 1. Verifica cache em memória (TTL) para evitar leituras repetidas no Firestore
+ * 2. Busca prompt ativo do cliente (doc path: clients/{clientId}/prompts/{type})
+ * 3. Se não encontrar → usa prompt global default
+ * 4. Enriquece com RAG (base de conhecimento .md do cliente)
+ * 5. Enriquece com few-shot examples de gerações aprovadas
+ * 6. Enriquece com instruções de skills ativas
  */
 export async function resolvePrompt(clientId, promptType, productData = null) {
+  // Verificar cache em memória
+  const cached = promptCache.get(clientId, promptType)
+  if (cached) {
+    return cached
+  }
+
   const isMock = isTestClient(clientId)
 
   // 1. Buscar prompt customizado do cliente
@@ -289,7 +297,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     fullPrompt += `\n\n${activeSkillsInstructions.join('\n\n')}`
   }
 
-  return {
+  const resolvedResult = {
     systemPrompt: fullPrompt,
     version: promptData.version ?? 1,
     fewShotExamples,
@@ -298,6 +306,11 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     ragChunksUsed,
     approvedRules,
   }
+
+  // Armazenar no cache em memória
+  promptCache.set(clientId, promptType, resolvedResult)
+
+  return resolvedResult
 }
 
 /**

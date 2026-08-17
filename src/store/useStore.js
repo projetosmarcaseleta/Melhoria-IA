@@ -9,7 +9,7 @@ const useStore = create(
       // ─── Autenticação ──────────────────────────────────────────────
       auth: {
         user: null,       // { id, email, name, role }
-        session: null,    // Supabase session object
+        session: null,    // Firebase session object ({ access_token })
         isLoading: true,  // verificando sessão ao iniciar
       },
 

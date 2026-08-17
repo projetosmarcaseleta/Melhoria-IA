@@ -1,15 +1,5 @@
-import axios from 'axios'
+import apiClient from './apiClient'
 import useStore from '../store/useStore'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
-
-function getAuthHeaders() {
-  const session = useStore.getState().auth.session
-  if (!session?.access_token) {
-    throw new Error('Usuário não autenticado.')
-  }
-  return { Authorization: `Bearer ${session.access_token}` }
-}
 
 /**
  * Envia PATCH ao AnyMarket via backend Express → n8n webhook.
@@ -19,8 +9,8 @@ function getAuthHeaders() {
 export async function patchProduct(productId, title, description, gumgaToken, generationIds = []) {
   const activeClient = useStore.getState().activeClient
 
-  await axios.post(
-    `${API_BASE}/api/anymarket/patch`,
+  await apiClient.post(
+    '/api/anymarket/patch',
     {
       productId,
       title,
@@ -31,7 +21,6 @@ export async function patchProduct(productId, title, description, gumgaToken, ge
     },
     {
       timeout: 60_000,
-      headers: getAuthHeaders(),
     }
   )
 }

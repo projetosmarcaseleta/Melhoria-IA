@@ -2,12 +2,13 @@ import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { chunkMarkdown, generateEmbedding } from '../services/ragService.js'
 import { extractRulesFromMarkdown } from '../services/ruleExtractor.js'
+import { promptCache } from '../services/promptCache.js'
 
 const router = Router()
 
 /**
  * POST /api/knowledge/:clientId
- * Cadastra um novo documento .md, realiza chunking, gera embeddings e extrai regras estruturadas.
+ * Cadastra um novo documento .md, realiza chunking, gera embeddings em paralelo e extrai regras estruturadas.
  * Body: { filename: string, content: string }
  */
 router.post('/:clientId', async (req, res, next) => {
@@ -40,51 +41,56 @@ router.post('/:clientId', async (req, res, next) => {
       return res.status(400).json({ error: 'Nenhum conteúdo válido encontrado no arquivo.' })
     }
 
-    // 3. Gerar embeddings e gravar cada chunk individualmente
+    // 3. Gerar embeddings em paralelo e persistir chunks via batch
     const chunksCollection = db.collection('clients').doc(clientId).collection('knowledge_chunks')
-    let chunkCount = 0
+    
+    // Gerar embeddings com concorrência
+    const embeddings = await Promise.all(
+      chunks.map((chunkText, i) =>
+        generateEmbedding(chunkText).catch((embErr) => {
+          console.error(`[Knowledge] Erro embedding chunk ${i}:`, embErr.message)
+          throw new Error(`Falha ao gerar embedding via OpenAI (chunk ${i}): ${embErr.message}`)
+        })
+      )
+    )
 
+    const chunksBatch = db.batch()
     for (let i = 0; i < chunks.length; i++) {
-      const chunkText = chunks[i]
-      let embedding
-
-      try {
-        embedding = await generateEmbedding(chunkText)
-      } catch (embErr) {
-        console.error(`[Knowledge] Erro ao gerar embedding do chunk ${i}:`, embErr.message)
-        throw new Error(`Falha ao gerar embedding via OpenAI (chunk ${i}): ${embErr.message}`)
-      }
-
-      await chunksCollection.doc().set({
+      const chunkRef = chunksCollection.doc()
+      chunksBatch.set(chunkRef, {
         docId,
         filename,
         chunkIndex: i,
-        content: chunkText,
-        embedding,
+        content: chunks[i],
+        embedding: embeddings[i],
         createdAt: FieldValue.serverTimestamp(),
       })
-
-      chunkCount++
     }
+    await chunksBatch.commit()
+    const chunkCount = chunks.length
 
     // 4. Extração Estruturada por IA das Regras do Documento
     let extractedRuleCount = 0
     try {
       const analysisResult = await extractRulesFromMarkdown(content, filename)
       const rulesCollection = db.collection('clients').doc(clientId).collection('knowledge_rules')
+      const rulesBatch = db.batch()
 
       for (const rule of analysisResult.rules) {
         const ruleRef = rulesCollection.doc()
-        await ruleRef.set({
+        rulesBatch.set(ruleRef, {
           ...rule,
           sourceDocId: docId,
-          // Regras de texto fixo/institucional são pré-aprovadas por padrão se detectadas com alta confiança
-          status: rule.type === 'fixed_text' || rule.application === 'prepend_exactly' ? 'approved' : 'approved',
+          status: 'approved',
           approvedBy: req.user.id,
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         })
         extractedRuleCount++
+      }
+
+      if (extractedRuleCount > 0) {
+        await rulesBatch.commit()
       }
 
       await docRef.update({
@@ -98,6 +104,9 @@ router.post('/:clientId', async (req, res, next) => {
       console.warn('[Knowledge] Aviso na extração de regras:', analysisErr.message)
       await docRef.update({ chunkCount, analysisStatus: 'review_required' })
     }
+
+    // Invalidar cache de prompt do cliente
+    promptCache.invalidateClient(clientId)
 
     return res.status(201).json({
       id: docId,
@@ -197,6 +206,8 @@ router.put('/:clientId/rules/:ruleId', async (req, res, next) => {
     const { clientId, ruleId } = req.params
     const updates = req.body ?? {}
 
+    promptCache.invalidateClient(clientId)
+
     if (isTestClient(clientId) || ruleId.startsWith('rule-teste')) {
       const updated = updateMockRule(ruleId, updates)
       return res.json({ ok: true, message: 'Regra atualizada com sucesso.', rule: updated })
@@ -227,6 +238,7 @@ router.put('/:clientId/rules/:ruleId', async (req, res, next) => {
 router.post('/:clientId/rules/:ruleId/approve', async (req, res, next) => {
   try {
     const { clientId, ruleId } = req.params
+    promptCache.invalidateClient(clientId)
 
     if (isTestClient(clientId) || ruleId.startsWith('rule-teste')) {
       updateMockRule(ruleId, { status: 'approved', approvedBy: req.user?.id })
@@ -259,6 +271,7 @@ router.post('/:clientId/rules/:ruleId/approve', async (req, res, next) => {
 router.post('/:clientId/rules/:ruleId/reject', async (req, res, next) => {
   try {
     const { clientId, ruleId } = req.params
+    promptCache.invalidateClient(clientId)
 
     if (isTestClient(clientId) || ruleId.startsWith('rule-teste')) {
       updateMockRule(ruleId, { status: 'rejected' })
@@ -284,11 +297,12 @@ router.post('/:clientId/rules/:ruleId/reject', async (req, res, next) => {
 
 /**
  * DELETE /api/knowledge/:clientId/:docId
- * Remove um documento .md, seus chunks e suas regras associadas.
+ * Remove um documento .md, seus chunks e suas regras associadas usando lote (batch).
  */
 router.delete('/:clientId/:docId', async (req, res, next) => {
   try {
     const { clientId, docId } = req.params
+    promptCache.invalidateClient(clientId)
 
     if (isTestClient(clientId) || docId.startsWith('doc-teste')) {
       deleteMockKnowledgeDoc(clientId, docId)
@@ -296,7 +310,9 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
     }
 
     try {
-      // 1. Remover chunks individualmente
+      const deleteBatch = db.batch()
+
+      // 1. Chunks associados
       const chunksSnapshot = await db
         .collection('clients')
         .doc(clientId)
@@ -304,11 +320,9 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
         .where('docId', '==', docId)
         .get()
 
-      for (const doc of chunksSnapshot.docs) {
-        await doc.ref.delete()
-      }
+      chunksSnapshot.docs.forEach((d) => deleteBatch.delete(d.ref))
 
-      // 2. Remover regras associadas ao documento
+      // 2. Regras associadas
       const rulesSnapshot = await db
         .collection('clients')
         .doc(clientId)
@@ -316,17 +330,18 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
         .where('sourceDocId', '==', docId)
         .get()
 
-      for (const doc of rulesSnapshot.docs) {
-        await doc.ref.delete()
-      }
+      rulesSnapshot.docs.forEach((d) => deleteBatch.delete(d.ref))
 
-      // 3. Remover o documento principal
-      await db
+      // 3. Documento principal
+      const docRef = db
         .collection('clients')
         .doc(clientId)
         .collection('knowledge_docs')
         .doc(docId)
-        .delete()
+
+      deleteBatch.delete(docRef)
+
+      await deleteBatch.commit()
 
       return res.json({ ok: true, message: 'Documento, chunks e regras removidos com sucesso.' })
     } catch (err) {

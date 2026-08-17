@@ -38,8 +38,17 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// Normalizar prefixo /edit/api para /api caso o frontend chame com o subpath de produção
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/edit/api')) {
+    req.url = req.url.replace(/^\/edit\/api/, '/api')
+  }
+  next()
+})
+
 // Servir arquivos estáticos do frontend (dist) para produção
 const distPath = path.join(__dirname, '../dist')
+app.use('/edit', express.static(distPath))
 app.use(express.static(distPath))
 
 // ── Rotas protegidas (requerem autenticação) ───────────────────
@@ -54,10 +63,8 @@ app.use('/api/skills', requireAuth, skillsRouter)
 app.use('/api/operators', requireAuth, operatorsRouter)
 
 // Catch-all para SPA Frontend (qualquer rota que não seja /api)
-// Express 5 (path-to-regexp v7) não aceita mais '*' como padrão de rota,
-// por isso usamos app.use (sem path) em vez de app.get('*', ...)
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+  if (req.path.startsWith('/api') || req.path.startsWith('/edit/api') || req.path.startsWith('/health')) {
     return next()
   }
   res.sendFile(path.join(distPath, 'index.html'), (err) => {
@@ -78,8 +85,5 @@ app.listen(PORT, () => {
   console.log(`[Backend] Servidor rodando em http://localhost:${PORT}`)
   if (!process.env.OPENAI_API_KEY) {
     console.warn('[AVISO] OPENAI_API_KEY não definida no .env — chamadas à IA vão falhar.')
-  }
-  if (!process.env.SUPABASE_URL) {
-    console.warn('[AVISO] SUPABASE_URL não definida no .env — funcionalidades multi-cliente desabilitadas.')
   }
 })

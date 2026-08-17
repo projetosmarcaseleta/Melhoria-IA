@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
-import { isTestClient, updateMockFeedback, getMockFeedbackStats } from '../services/mockStorage.js'
+import { updateMockFeedback } from '../services/mockStorage.js'
 
 const router = Router()
 
@@ -119,56 +119,6 @@ router.post('/batch', async (req, res, next) => {
     }
 
     return res.json({ updated: generationIds.length })
-  } catch (err) {
-    next(err)
-  }
-})
-
-/**
- * GET /api/feedback/stats/:clientId
- * Retorna métricas de feedback de um cliente.
- */
-router.get('/stats/:clientId', async (req, res, next) => {
-  try {
-    const { clientId } = req.params
-
-    if (isTestClient(clientId)) {
-      return res.json(getMockFeedbackStats(clientId))
-    }
-
-    try {
-      const snapshot = await db.collection('generations')
-        .where('clientId', '==', clientId)
-        .get()
-
-      let pending = 0
-      let approved = 0
-      let rejected = 0
-      let edited = 0
-
-      snapshot.docs.forEach((doc) => {
-        const st = doc.data().feedbackStatus
-        if (st === 'pending') pending++
-        else if (st === 'approved') approved++
-        else if (st === 'rejected') rejected++
-        else if (st === 'edited') edited++
-      })
-
-      const total = approved + rejected + edited
-      const approvalRate = total > 0 ? (approved + edited) / total : 0
-
-      return res.json({
-        pending,
-        approved,
-        rejected,
-        edited,
-        totalEvaluated: total,
-        approvalRate: Math.round(approvalRate * 1000) / 10,
-      })
-    } catch (err) {
-      console.warn('[FeedbackStats] Aviso Firestore (usando mock):', err.message)
-      return res.json(getMockFeedbackStats(clientId))
-    }
   } catch (err) {
     next(err)
   }

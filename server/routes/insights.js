@@ -45,98 +45,152 @@ import { isTestClient, getMockGenerations, getMockPrompt } from '../services/moc
  * GET /api/insights/:clientId
  * Retorna análise detalhada de métricas e padrões de aprendizado do cliente.
  */
+// Limite de amostra para análises que exigem o texto completo (comprimento médio,
+// frequência de palavras). Contagens/taxa de aprovação usam count() e cobrem o
+// histórico inteiro; só a amostra de texto é limitada, para o Dashboard abrir
+// rápido mesmo com milhares de gerações históricas.
+const TEXT_SAMPLE_LIMIT = 150
+
+function computeStatsFromMock(gens) {
+  const approved = gens.filter((g) => g.feedbackStatus === 'approved')
+  const rejected = gens.filter((g) => g.feedbackStatus === 'rejected')
+  const edited = gens.filter((g) => g.feedbackStatus === 'edited')
+  return buildTypeStats({
+    total: gens.length,
+    approvedCount: approved.length,
+    rejectedCount: rejected.length,
+    editedCount: edited.length,
+    approvedTexts: [...approved, ...edited].map((g) => g.editedText || g.generatedText || ''),
+    rejectedTexts: rejected.map((g) => g.generatedText || ''),
+  })
+}
+
+function buildTypeStats({ total, approvedCount, rejectedCount, editedCount, approvedTexts, rejectedTexts }) {
+  const evaluated = approvedCount + rejectedCount + editedCount
+  const approvalRate = evaluated > 0 ? (approvedCount + editedCount) / evaluated : 0
+
+  const avgApprovedLength = approvedTexts.length > 0
+    ? Math.round(approvedTexts.reduce((acc, t) => acc + t.length, 0) / approvedTexts.length)
+    : 0
+
+  const avgRejectedLength = rejectedTexts.length > 0
+    ? Math.round(rejectedTexts.reduce((acc, t) => acc + t.length, 0) / rejectedTexts.length)
+    : 0
+
+  const topApprovedWords = extractWordFrequencies(approvedTexts)
+  const topRejectedWords = extractWordFrequencies(rejectedTexts)
+
+  const recommendations = []
+  if (evaluated >= 5) {
+    if (approvalRate < 0.6) {
+      recommendations.push('A taxa de aprovação está abaixo de 60%. Considere gerar um refinamento de prompt via Meta-Prompt.')
+    } else if (approvalRate >= 0.85) {
+      recommendations.push('Excelente taxa de aprovação! A IA está bem alinhada com as preferências do cliente.')
+    }
+
+    if (avgApprovedLength > 0 && avgRejectedLength > 0) {
+      if (avgRejectedLength > avgApprovedLength + 10) {
+        recommendations.push(`Textos rejeitados são em média ${avgRejectedLength - avgApprovedLength} caracteres mais longos que os aprovados. Instrua a IA a ser mais concisa.`)
+      }
+    }
+
+    if (topRejectedWords.length > 0) {
+      const frequentRejected = topRejectedWords.filter((w) => w.count >= 2).map((w) => w.word)
+      if (frequentRejected.length > 0) {
+        recommendations.push(`Termos frequentemente presentes em rejeições: ${frequentRejected.slice(0, 5).join(', ')}.`)
+      }
+    }
+  }
+
+  return {
+    total,
+    evaluated,
+    approved: approvedCount,
+    rejected: rejectedCount,
+    edited: editedCount,
+    approvalRate: Math.round(approvalRate * 1000) / 10, // ex: 85.5%
+    avgApprovedLength,
+    avgRejectedLength,
+    topApprovedWords,
+    topRejectedWords,
+    recommendations,
+  }
+}
+
+/**
+ * Busca uma amostra limitada de textos (mais recentes) para um conjunto de status,
+ * usada apenas para as análises que precisam do conteúdo (comprimento, palavras).
+ * Faz fallback sem orderBy caso falte o índice composto no Firestore.
+ */
+async function fetchTextSample(baseRef, statuses) {
+  const filtered = baseRef.where('feedbackStatus', 'in', statuses)
+  try {
+    const snap = await filtered.orderBy('createdAt', 'desc').limit(TEXT_SAMPLE_LIMIT).get()
+    return snap.docs.map((d) => d.data())
+  } catch (err) {
+    const snap = await filtered.limit(TEXT_SAMPLE_LIMIT).get()
+    return snap.docs.map((d) => d.data())
+  }
+}
+
+async function computeTypeStatsFromFirestore(clientId, generationType) {
+  const baseRef = db
+    .collection('generations')
+    .where('clientId', '==', clientId)
+    .where('generationType', '==', generationType)
+
+  const [totalSnap, approvedSnap, rejectedSnap, editedSnap, approvedSample, rejectedSample] = await Promise.all([
+    baseRef.count().get(),
+    baseRef.where('feedbackStatus', '==', 'approved').count().get(),
+    baseRef.where('feedbackStatus', '==', 'rejected').count().get(),
+    baseRef.where('feedbackStatus', '==', 'edited').count().get(),
+    fetchTextSample(baseRef, ['approved', 'edited']),
+    fetchTextSample(baseRef, ['rejected']),
+  ])
+
+  return buildTypeStats({
+    total: totalSnap.data().count,
+    approvedCount: approvedSnap.data().count,
+    rejectedCount: rejectedSnap.data().count,
+    editedCount: editedSnap.data().count,
+    approvedTexts: approvedSample.map((g) => g.editedText || g.generatedText || ''),
+    rejectedTexts: rejectedSample.map((g) => g.generatedText || ''),
+  })
+}
+
 router.get('/:clientId', async (req, res, next) => {
   try {
     const { clientId } = req.params
 
-    let allGens = []
     if (isTestClient(clientId)) {
-      allGens = getMockGenerations(clientId, 100)
-    } else {
-      try {
-        const snapshot = await db
-          .collection('generations')
-          .where('clientId', '==', clientId)
-          .get()
-
-        allGens = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
-      } catch (err) {
-        console.warn('[Insights] Aviso Firestore:', err.message)
-        allGens = getMockGenerations(clientId, 100)
-      }
+      const allGens = getMockGenerations(clientId, 100)
+      return res.json({
+        titleStats: computeStatsFromMock(allGens.filter((g) => g.generationType === 'titulo')),
+        descStats: computeStatsFromMock(allGens.filter((g) => g.generationType === 'descricao')),
+        totalGenerations: allGens.length,
+      })
     }
 
-    const titleGens = allGens.filter((g) => g.generationType === 'titulo')
-    const descGens = allGens.filter((g) => g.generationType === 'descricao')
+    try {
+      const [titleStats, descStats] = await Promise.all([
+        computeTypeStatsFromFirestore(clientId, 'titulo'),
+        computeTypeStatsFromFirestore(clientId, 'descricao'),
+      ])
 
-    const computeTypeStats = (gens) => {
-      const total = gens.length
-      const approved = gens.filter((g) => g.feedbackStatus === 'approved')
-      const rejected = gens.filter((g) => g.feedbackStatus === 'rejected')
-      const edited = gens.filter((g) => g.feedbackStatus === 'edited')
-      const evaluated = approved.length + rejected.length + edited.length
-
-      const approvalRate = evaluated > 0 ? (approved.length + edited.length) / evaluated : 0
-
-      // Comprimentos médios
-      const approvedTexts = [...approved, ...edited].map((g) => g.editedText || g.generatedText || '')
-      const rejectedTexts = rejected.map((g) => g.generatedText || '')
-
-      const avgApprovedLength = approvedTexts.length > 0
-        ? Math.round(approvedTexts.reduce((acc, t) => acc + t.length, 0) / approvedTexts.length)
-        : 0
-
-      const avgRejectedLength = rejectedTexts.length > 0
-        ? Math.round(rejectedTexts.reduce((acc, t) => acc + t.length, 0) / rejectedTexts.length)
-        : 0
-
-      // Frequência de palavras
-      const topApprovedWords = extractWordFrequencies(approvedTexts)
-      const topRejectedWords = extractWordFrequencies(rejectedTexts)
-
-      // Recomendações automáticas
-      const recommendations = []
-      if (evaluated >= 5) {
-        if (approvalRate < 0.6) {
-          recommendations.push('A taxa de aprovação está abaixo de 60%. Considere gerar um refinamento de prompt via Meta-Prompt.')
-        } else if (approvalRate >= 0.85) {
-          recommendations.push('Excelente taxa de aprovação! A IA está bem alinhada com as preferências do cliente.')
-        }
-
-        if (avgApprovedLength > 0 && avgRejectedLength > 0) {
-          if (avgRejectedLength > avgApprovedLength + 10) {
-            recommendations.push(`Textos rejeitados são em média ${avgRejectedLength - avgApprovedLength} caracteres mais longos que os aprovados. Instrua a IA a ser mais concisa.`)
-          }
-        }
-
-        if (topRejectedWords.length > 0) {
-          const frequentRejected = topRejectedWords.filter((w) => w.count >= 2).map((w) => w.word)
-          if (frequentRejected.length > 0) {
-            recommendations.push(`Termos frequentemente presentes em rejeições: ${frequentRejected.slice(0, 5).join(', ')}.`)
-          }
-        }
-      }
-
-      return {
-        total,
-        evaluated,
-        approved: approved.length,
-        rejected: rejected.length,
-        edited: edited.length,
-        approvalRate: Math.round(approvalRate * 1000) / 10, // ex: 85.5%
-        avgApprovedLength,
-        avgRejectedLength,
-        topApprovedWords,
-        topRejectedWords,
-        recommendations,
-      }
+      return res.json({
+        titleStats,
+        descStats,
+        totalGenerations: titleStats.total + descStats.total,
+      })
+    } catch (err) {
+      console.warn('[Insights] Aviso Firestore:', err.message)
+      const allGens = getMockGenerations(clientId, 100)
+      return res.json({
+        titleStats: computeStatsFromMock(allGens.filter((g) => g.generationType === 'titulo')),
+        descStats: computeStatsFromMock(allGens.filter((g) => g.generationType === 'descricao')),
+        totalGenerations: allGens.length,
+      })
     }
-
-    return res.json({
-      titleStats: computeTypeStats(titleGens),
-      descStats: computeTypeStats(descGens),
-      totalGenerations: allGens.length,
-    })
   } catch (err) {
     next(err)
   }

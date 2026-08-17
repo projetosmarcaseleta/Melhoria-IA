@@ -260,38 +260,3 @@ export function updateMockFeedback(generationId, updates, userId = 'test-operato
   return updated
 }
 
-export function getMockFeedbackStats(clientId) {
-  const gens = Array.from(mockStore.generations.values()).filter((g) => g.clientId === clientId)
-  let pending = 0, approved = 0, rejected = 0, edited = 0
-
-  gens.forEach((g) => {
-    if (g.feedbackStatus === 'pending') pending++
-    else if (g.feedbackStatus === 'approved') approved++
-    else if (g.feedbackStatus === 'rejected') rejected++
-    else if (g.feedbackStatus === 'edited') edited++
-  })
-
-  // Se não houver gerações ainda, simular métricas realistas para o painel de teste
-  if (gens.length === 0) {
-    return {
-      pending: 2,
-      approved: 18,
-      rejected: 1,
-      edited: 3,
-      totalEvaluated: 22,
-      approvalRate: 95.5,
-    }
-  }
-
-  const total = approved + rejected + edited
-  const approvalRate = total > 0 ? (approved + edited) / total : 1.0
-
-  return {
-    pending,
-    approved,
-    rejected,
-    edited,
-    totalEvaluated: total,
-    approvalRate: Math.round(approvalRate * 1000) / 10,
-  }
-}

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { requireAdmin } from '../middleware/auth.js'
+import { promptCache } from '../services/promptCache.js'
 
 const router = Router()
 
@@ -250,6 +251,9 @@ router.put('/:clientId', async (req, res, next) => {
       if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
       if (descricao) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
     }
+
+    // Invalidar cache do cliente
+    promptCache.invalidateClient(clientId)
 
     return res.json({ ok: true, message: 'Prompts atualizados com sucesso.' })
   } catch (err) {

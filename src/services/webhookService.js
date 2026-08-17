@@ -1,15 +1,4 @@
-import axios from 'axios'
-import useStore from '../store/useStore'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
-
-function getAuthHeaders() {
-  const session = useStore.getState().auth.session
-  if (session?.access_token) {
-    return { Authorization: `Bearer ${session.access_token}` }
-  }
-  return {}
-}
+import apiClient from './apiClient'
 
 /**
  * Consulta os produtos via backend proxy → n8n webhook PostgreSQL.
@@ -18,13 +7,12 @@ function getAuthHeaders() {
  * O webhook deve retornar: [{ID, TITULO, DESCRIÇÃO, CARACTERISTICAS}, ...]
  */
 export async function fetchProductsFromWebhook(ids) {
-  const response = await axios.post(
-    `${API_BASE}/api/anymarket/fetch-products`,
+  const response = await apiClient.post(
+    '/api/anymarket/fetch-products',
     { ids },
     {
       headers: {
         'Content-Type': 'application/json',
-        ...getAuthHeaders(),
       },
       timeout: 60_000,
     }
