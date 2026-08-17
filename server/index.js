@@ -79,7 +79,4 @@ app.listen(PORT, () => {
   if (!process.env.OPENAI_API_KEY) {
     console.warn('[AVISO] OPENAI_API_KEY não definida no .env — chamadas à IA vão falhar.')
   }
-  if (!process.env.SUPABASE_URL) {
-    console.warn('[AVISO] SUPABASE_URL não definida no .env — funcionalidades multi-cliente desabilitadas.')
-  }
 })

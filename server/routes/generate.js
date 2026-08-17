@@ -63,7 +63,8 @@ router.post('/', async (req, res, next) => {
     }
 
     const model = settings.model ?? 'gpt-4o-mini'
-    const temperature = settings.temperature ?? 1
+    const titleTemperature = settings.titleTemperature ?? (settings.temperature !== undefined ? Math.min(settings.temperature, 0.4) : 0.2)
+    const descTemperature = settings.temperature ?? 0.4
 
     const doTitle = !fields || fields.includes('title')
     const doDesc = !fields || fields.includes('description')
@@ -84,7 +85,7 @@ router.post('/', async (req, res, next) => {
                 systemPrompt: titlePrompt.systemPrompt,
                 productData: product,
                 model,
-                temperature,
+                temperature: titleTemperature,
               })
             : Promise.resolve(null),
           doDesc && descPrompt
@@ -92,7 +93,7 @@ router.post('/', async (req, res, next) => {
                 systemPrompt: descPrompt.systemPrompt,
                 productData: product,
                 model,
-                temperature,
+                temperature: descTemperature,
               })
             : Promise.resolve(null),
         ])
@@ -332,6 +333,11 @@ router.get('/history/:clientId', async (req, res, next) => {
       const snapshot = await query
         .limit(Number(limit))
         .get()
+
+      const data = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
 
       return res.json({ data, total: data.length })
     } catch (err) {

@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import apiClient from '../services/apiClient'
 import useStore from '../store/useStore'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
 
 // Fallbacks de segurança para garantir que o prompt default NUNCA venha vazio
 const FALLBACK_DEFAULT_PROMPTS = {
@@ -104,14 +102,6 @@ Somente HTML válido utilizando <p>, <ul> e <li>.
 Não incluir comentários, explicações ou qualquer texto fora do HTML.`,
 }
 
-function getAuthHeaders() {
-  const session = useStore.getState().auth.session
-  if (!session?.access_token) {
-    throw new Error('Usuário não autenticado.')
-  }
-  return { Authorization: `Bearer ${session.access_token}` }
-}
-
 export default function ConfigModal() {
   const config = useStore((s) => s.config)
   const setConfig = useStore((s) => s.setConfig)
@@ -141,10 +131,8 @@ export default function ConfigModal() {
       setPromptsLoading(true)
       setPromptsError('')
 
-      axios
-        .get(`${API_BASE}/api/prompts/${activeClient.id}`, {
-          headers: getAuthHeaders(),
-        })
+      apiClient
+        .get(`/api/prompts/${activeClient.id}`)
         .then(({ data }) => {
           const loadedDefaults = data?.defaultPrompts || FALLBACK_DEFAULT_PROMPTS
           setDefaultPrompts({
@@ -201,10 +189,9 @@ export default function ConfigModal() {
       if (activeClient?.id && form.anymarketToken !== activeClient.anymarket_token) {
         if (canEditPrompt) {
           try {
-            await axios.patch(
-              `${API_BASE}/api/clients/${activeClient.id}`,
-              { anymarket_token: form.anymarketToken },
-              { headers: getAuthHeaders() }
+            await apiClient.patch(
+              `/api/clients/${activeClient.id}`,
+              { anymarket_token: form.anymarketToken }
             )
           } catch (patchErr) {
             console.warn('[ConfigModal] Aviso ao atualizar token do cliente:', patchErr.message)
@@ -218,13 +205,12 @@ export default function ConfigModal() {
 
       // 3. Salvar prompts no backend se em modo customizado e tiver permissão
       if (activeClient?.id && form.promptMode === 'custom' && canEditPrompt) {
-        await axios.put(
-          `${API_BASE}/api/prompts/${activeClient.id}`,
+        await apiClient.put(
+          `/api/prompts/${activeClient.id}`,
           {
             titulo: customPrompts.titulo,
             descricao: customPrompts.descricao,
-          },
-          { headers: getAuthHeaders() }
+          }
         )
       }
 

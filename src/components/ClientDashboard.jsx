@@ -1,16 +1,6 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import apiClient from '../services/apiClient'
 import useStore from '../store/useStore'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
-
-function getAuthHeaders() {
-  const session = useStore.getState().auth.session
-  if (!session?.access_token) {
-    throw new Error('Usuário não autenticado.')
-  }
-  return { Authorization: `Bearer ${session.access_token}` }
-}
 
 export default function ClientDashboard() {
   const activeClient = useStore((s) => s.activeClient)
@@ -35,9 +25,7 @@ export default function ClientDashboard() {
   const fetchInsights = async () => {
     try {
       setLoading(true)
-      const res = await axios.get(`${API_BASE}/api/insights/${activeClient.id}`, {
-        headers: getAuthHeaders(),
-      })
+      const res = await apiClient.get(`/api/insights/${activeClient.id}`)
       setStats(res.data)
     } catch (err) {
       console.warn('[ClientDashboard] Aviso ao carregar insights:', err.message)
@@ -61,10 +49,9 @@ export default function ClientDashboard() {
       setMetaPromptType(type)
       setMetaResult(null)
 
-      const res = await axios.post(
-        `${API_BASE}/api/insights/${activeClient.id}/meta-prompt`,
-        { promptType: type },
-        { headers: getAuthHeaders() }
+      const res = await apiClient.post(
+        `/api/insights/${activeClient.id}/meta-prompt`,
+        { promptType: type }
       )
 
       setMetaResult(res.data)
@@ -86,10 +73,9 @@ export default function ClientDashboard() {
         [metaPromptType]: metaResult.improvedPrompt,
       }
 
-      await axios.put(
-        `${API_BASE}/api/prompts/${activeClient.id}`,
-        payload,
-        { headers: getAuthHeaders() }
+      await apiClient.put(
+        `/api/prompts/${activeClient.id}`,
+        payload
       )
 
       addToast('success', `Pronto! Novo prompt de ${metaPromptType === 'titulo' ? 'Título' : 'Descrição'} já está valendo para ${activeClient.name}.`)

@@ -1,22 +1,9 @@
-import axios from 'axios'
+import apiClient from './apiClient'
 import useStore from '../store/useStore'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
-
-/**
- * Retorna headers de autenticação com o token do Supabase.
- */
-function getAuthHeaders() {
-  const session = useStore.getState().auth.session
-  if (!session?.access_token) {
-    throw new Error('Usuário não autenticado.')
-  }
-  return { Authorization: `Bearer ${session.access_token}` }
-}
 
 /**
  * Envia produtos ao backend para processamento com IA.
- * Usa a nova rota /api/generate que requer clientId e autenticação.
+ * Usa a rota /api/generate com autenticação dinâmica e multi-cliente.
  *
  * `fields`: array com os campos a gerar — ['title'], ['description'] ou ['title','description'] (padrão).
  * Retorna: [{id, newTitle?, newDescription?, titleGenerationId?, descGenerationId?, error?}]
@@ -35,8 +22,8 @@ export async function processProductsWithAI(products, fields = ['title', 'descri
     characteristics: p.characteristics,
   }))
 
-  const response = await axios.post(
-    `${API_BASE}/api/generate`,
+  const response = await apiClient.post(
+    '/api/generate',
     {
       clientId: activeClient.id,
       products: payload,
@@ -44,7 +31,6 @@ export async function processProductsWithAI(products, fields = ['title', 'descri
     },
     {
       timeout: 120_000,
-      headers: getAuthHeaders(),
     }
   )
 
@@ -55,10 +41,9 @@ export async function processProductsWithAI(products, fields = ['title', 'descri
  * Envia feedback para uma geração específica.
  */
 export async function submitFeedback(generationId, status, editedText, reason) {
-  const response = await axios.patch(
-    `${API_BASE}/api/feedback/${generationId}`,
-    { status, editedText, reason },
-    { headers: getAuthHeaders() }
+  const response = await apiClient.patch(
+    `/api/feedback/${generationId}`,
+    { status, editedText, reason }
   )
   return response.data
 }
@@ -67,10 +52,9 @@ export async function submitFeedback(generationId, status, editedText, reason) {
  * Envia feedback em lote.
  */
 export async function submitBatchFeedback(generationIds, status) {
-  const response = await axios.post(
-    `${API_BASE}/api/feedback/batch`,
-    { generationIds, status },
-    { headers: getAuthHeaders() }
+  const response = await apiClient.post(
+    '/api/feedback/batch',
+    { generationIds, status }
   )
   return response.data
 }
@@ -79,9 +63,8 @@ export async function submitBatchFeedback(generationIds, status) {
  * Busca métricas de feedback de um cliente.
  */
 export async function fetchFeedbackStats(clientId) {
-  const response = await axios.get(
-    `${API_BASE}/api/feedback/stats/${clientId}`,
-    { headers: getAuthHeaders() }
+  const response = await apiClient.get(
+    `/api/feedback/stats/${clientId}`
   )
   return response.data
 }

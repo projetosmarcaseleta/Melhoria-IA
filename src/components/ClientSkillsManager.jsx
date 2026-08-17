@@ -1,16 +1,6 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import apiClient from '../services/apiClient'
 import useStore from '../store/useStore'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
-
-function getAuthHeaders() {
-  const session = useStore.getState().auth.session
-  if (!session?.access_token) {
-    throw new Error('Usuário não autenticado.')
-  }
-  return { Authorization: `Bearer ${session.access_token}` }
-}
 
 export default function ClientSkillsManager() {
   const activeClient = useStore((s) => s.activeClient)
@@ -30,9 +20,7 @@ export default function ClientSkillsManager() {
   const fetchSkills = async () => {
     try {
       setLoading(true)
-      const res = await axios.get(`${API_BASE}/api/skills/${activeClient.id}`, {
-        headers: getAuthHeaders(),
-      })
+      const res = await apiClient.get(`/api/skills/${activeClient.id}`)
       setSkills(res.data)
     } catch (err) {
       console.error('[ClientSkillsManager] Erro ao carregar skills:', err)
@@ -61,13 +49,12 @@ export default function ClientSkillsManager() {
   const handleSaveSkill = async (skill) => {
     try {
       setSavingId(skill.id)
-      await axios.put(
-        `${API_BASE}/api/skills/${activeClient.id}/${skill.id}`,
+      await apiClient.put(
+        `/api/skills/${activeClient.id}/${skill.id}`,
         {
           isActive: skill.isActive,
           config: skill.config,
-        },
-        { headers: getAuthHeaders() }
+        }
       )
       addToast('success', `Pronto! Habilidade "${skill.name}" atualizada.`)
     } catch (err) {

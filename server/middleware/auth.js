@@ -32,11 +32,8 @@ export async function requireAuth(req, res, next) {
       // Valida o Firebase ID Token
       decodedToken = await adminAuth.verifyIdToken(idToken)
     } catch (authErr) {
-      console.warn('[Auth] Erro ao validar token Firebase:', authErr.message)
-      // Se for ambiente de desenvolvimento/teste, não bloquear
-      req.user = { ...TEST_OPERATOR }
-      req.idToken = idToken
-      return next()
+      console.warn('[Auth] Token inválido ou expirado:', authErr.message)
+      return res.status(401).json({ error: 'Token de autenticação inválido ou expirado.' })
     }
 
     // Buscar perfil do operador no Firestore (coleção 'operators') com fallback
@@ -54,14 +51,14 @@ export async function requireAuth(req, res, next) {
       id: decodedToken.uid,
       email: decodedToken.email,
       name: operatorData?.name ?? decodedToken.name ?? decodedToken.email ?? 'Operador',
-      role: operatorData?.role ?? 'admin', // fallback para admin para não travar telas no teste
+      role: operatorData?.role ?? 'editor',
     }
 
     req.idToken = idToken
     next()
   } catch (err) {
     console.error('[Auth] Erro inesperado na autenticação:', err.message)
-    return res.status(401).json({ error: 'Falha na autenticação (token inválido ou expirado).' })
+    return res.status(401).json({ error: 'Falha na autenticação.' })
   }
 }
 

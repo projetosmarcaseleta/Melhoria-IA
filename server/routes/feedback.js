@@ -137,22 +137,18 @@ router.get('/stats/:clientId', async (req, res, next) => {
     }
 
     try {
-      const snapshot = await db.collection('generations')
-        .where('clientId', '==', clientId)
-        .get()
+      const baseRef = db.collection('generations').where('clientId', '==', clientId)
+      const [pendingSnap, approvedSnap, rejectedSnap, editedSnap] = await Promise.all([
+        baseRef.where('feedbackStatus', '==', 'pending').count().get(),
+        baseRef.where('feedbackStatus', '==', 'approved').count().get(),
+        baseRef.where('feedbackStatus', '==', 'rejected').count().get(),
+        baseRef.where('feedbackStatus', '==', 'edited').count().get(),
+      ])
 
-      let pending = 0
-      let approved = 0
-      let rejected = 0
-      let edited = 0
-
-      snapshot.docs.forEach((doc) => {
-        const st = doc.data().feedbackStatus
-        if (st === 'pending') pending++
-        else if (st === 'approved') approved++
-        else if (st === 'rejected') rejected++
-        else if (st === 'edited') edited++
-      })
+      const pending = pendingSnap.data().count
+      const approved = approvedSnap.data().count
+      const rejected = rejectedSnap.data().count
+      const edited = editedSnap.data().count
 
       const total = approved + rejected + edited
       const approvalRate = total > 0 ? (approved + edited) / total : 0

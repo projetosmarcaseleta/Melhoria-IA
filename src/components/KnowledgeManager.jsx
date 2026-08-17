@@ -1,16 +1,6 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import apiClient from '../services/apiClient'
 import useStore from '../store/useStore'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
-
-function getAuthHeaders() {
-  const session = useStore.getState().auth.session
-  if (!session?.access_token) {
-    throw new Error('Usuário não autenticado.')
-  }
-  return { Authorization: `Bearer ${session.access_token}` }
-}
 
 export default function KnowledgeManager() {
   const activeClient = useStore((s) => s.activeClient)
@@ -33,9 +23,7 @@ export default function KnowledgeManager() {
   const fetchDocuments = async () => {
     try {
       setLoading(true)
-      const res = await axios.get(`${API_BASE}/api/knowledge/${activeClient.id}`, {
-        headers: getAuthHeaders(),
-      })
+      const res = await apiClient.get(`/api/knowledge/${activeClient.id}`)
       setDocuments(res.data)
     } catch (err) {
       console.warn('[KnowledgeManager] Aviso ao carregar documentos:', err.message)
@@ -47,9 +35,7 @@ export default function KnowledgeManager() {
 
   const fetchRules = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/api/knowledge/${activeClient.id}/rules`, {
-        headers: getAuthHeaders(),
-      })
+      const res = await apiClient.get(`/api/knowledge/${activeClient.id}/rules`)
       setRules(res.data)
     } catch (err) {
       console.warn('[KnowledgeManager] Aviso ao carregar regras:', err.message)
@@ -68,14 +54,11 @@ export default function KnowledgeManager() {
       setUploading(true)
       const text = await file.text()
 
-      const res = await axios.post(
-        `${API_BASE}/api/knowledge/${activeClient.id}`,
+      const res = await apiClient.post(
+        `/api/knowledge/${activeClient.id}`,
         {
           filename: file.name,
           content: text,
-        },
-        {
-          headers: getAuthHeaders(),
         }
       )
 
@@ -93,9 +76,7 @@ export default function KnowledgeManager() {
   const handleToggleRuleStatus = async (ruleId, currentStatus) => {
     const action = currentStatus === 'approved' ? 'reject' : 'approve'
     try {
-      await axios.post(`${API_BASE}/api/knowledge/${activeClient.id}/rules/${ruleId}/${action}`, {}, {
-        headers: getAuthHeaders(),
-      })
+      await apiClient.post(`/api/knowledge/${activeClient.id}/rules/${ruleId}/${action}`, {})
       addToast('success', action === 'approve' ? 'Regra aprovada com sucesso.' : 'Regra desativada.')
       fetchRules()
     } catch (err) {
@@ -108,9 +89,7 @@ export default function KnowledgeManager() {
     if (!confirm(`Excluir o documento "${filename}" e as regras aprendidas dele?`)) return
 
     try {
-      await axios.delete(`${API_BASE}/api/knowledge/${activeClient.id}/${docId}`, {
-        headers: getAuthHeaders(),
-      })
+      await apiClient.delete(`/api/knowledge/${activeClient.id}/${docId}`)
       addToast('success', `Documento "${filename}" e regras removidas.`)
       setDocuments((prev) => prev.filter((d) => d.id !== docId))
       fetchRules()

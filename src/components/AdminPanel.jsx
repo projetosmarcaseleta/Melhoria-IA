@@ -1,16 +1,6 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import apiClient from '../services/apiClient'
 import useStore from '../store/useStore'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
-
-function getAuthHeaders() {
-  const session = useStore.getState().auth.session
-  if (!session?.access_token) {
-    throw new Error('Usuário não autenticado.')
-  }
-  return { Authorization: `Bearer ${session.access_token}` }
-}
 
 export default function AdminPanel() {
   const auth = useStore((s) => s.auth)
@@ -43,9 +33,7 @@ export default function AdminPanel() {
   const fetchClients = async () => {
     try {
       setClientsLoading(true)
-      const res = await axios.get(`${API_BASE}/api/clients`, {
-        headers: getAuthHeaders(),
-      })
+      const res = await apiClient.get('/api/clients')
       setClients(res.data)
     } catch (err) {
       console.error('[AdminPanel] Erro ao buscar clientes:', err)
@@ -58,9 +46,7 @@ export default function AdminPanel() {
   const fetchOperators = async () => {
     try {
       setOperatorsLoading(true)
-      const res = await axios.get(`${API_BASE}/api/operators`, {
-        headers: getAuthHeaders(),
-      })
+      const res = await apiClient.get('/api/operators')
       setOperators(res.data)
     } catch (err) {
       console.error('[AdminPanel] Erro ao buscar operadores:', err)
@@ -90,14 +76,13 @@ export default function AdminPanel() {
 
     try {
       setIsCreatingClient(true)
-      const res = await axios.post(
-        `${API_BASE}/api/clients`,
+      const res = await apiClient.post(
+        '/api/clients',
         {
           name: newClient.name.trim(),
           slug: newClient.slug.trim(),
           anymarket_token: newClient.anymarket_token.trim() || null,
-        },
-        { headers: getAuthHeaders() }
+        }
       )
 
       addToast('success', `Pronto! Cliente "${res.data.name}" cadastrado.`)
@@ -113,10 +98,9 @@ export default function AdminPanel() {
 
   const handleSaveClientToken = async (clientId) => {
     try {
-      await axios.patch(
-        `${API_BASE}/api/clients/${clientId}`,
-        { anymarket_token: tempTokenValue.trim() },
-        { headers: getAuthHeaders() }
+      await apiClient.patch(
+        `/api/clients/${clientId}`,
+        { anymarket_token: tempTokenValue.trim() }
       )
       addToast('success', 'Pronto! Token da AnyMarket atualizado.')
       setEditingClientToken(null)
@@ -129,10 +113,9 @@ export default function AdminPanel() {
 
   const handleToggleClientActive = async (client) => {
     try {
-      await axios.patch(
-        `${API_BASE}/api/clients/${client.id}`,
-        { isActive: !client.isActive },
-        { headers: getAuthHeaders() }
+      await apiClient.patch(
+        `/api/clients/${client.id}`,
+        { isActive: !client.isActive }
       )
       addToast('success', `Status de ${client.name} atualizado!`)
       fetchClients()
@@ -152,15 +135,14 @@ export default function AdminPanel() {
 
     try {
       setIsCreatingOperator(true)
-      const res = await axios.post(
-        `${API_BASE}/api/operators`,
+      const res = await apiClient.post(
+        '/api/operators',
         {
           name: newOperator.name.trim(),
           email: newOperator.email.trim(),
           password: newOperator.password,
           role: newOperator.role,
-        },
-        { headers: getAuthHeaders() }
+        }
       )
 
       addToast('success', res.data.message || `Operador "${newOperator.name}" criado!`)
@@ -177,10 +159,9 @@ export default function AdminPanel() {
   const handleToggleOperatorRole = async (op) => {
     const newRole = op.role === 'admin' ? 'editor' : 'admin'
     try {
-      await axios.patch(
-        `${API_BASE}/api/operators/${op.id}`,
-        { role: newRole },
-        { headers: getAuthHeaders() }
+      await apiClient.patch(
+        `/api/operators/${op.id}`,
+        { role: newRole }
       )
       addToast('success', `Função de ${op.name} alterada para ${newRole.toUpperCase()}`)
       fetchOperators()
@@ -194,9 +175,7 @@ export default function AdminPanel() {
     if (!confirm(`Remover o acesso de ${op.name} (${op.email}) permanentemente?`)) return
 
     try {
-      await axios.delete(`${API_BASE}/api/operators/${op.id}`, {
-        headers: getAuthHeaders(),
-      })
+      await apiClient.delete(`/api/operators/${op.id}`)
       addToast('success', `Operador "${op.name}" removido!`)
       fetchOperators()
     } catch (err) {
