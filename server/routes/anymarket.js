@@ -136,10 +136,18 @@ router.post('/fetch-products', async (req, res, next) => {
   } catch (err) {
     if (err.response) {
       const { status, data } = err.response
-      console.error(`[Webhook] Consulta falhou → HTTP ${status}:`, data)
-      return res.status(status).json({ error: `Webhook retornou ${status}`, detail: data })
+      console.error(`[Webhook] Consulta falhou no n8n → HTTP ${status}:`, data)
+      return res.status(status).json({
+        error: `O webhook do n8n retornou erro HTTP ${status}.`,
+        detail: data,
+      })
     }
-    next(err)
+    if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+      console.error('[Webhook] Timeout ao consultar webhook do n8n:', err.message)
+      return res.status(504).json({ error: 'Tempo limite excedido ao consultar o webhook do n8n (timeout de 60s).' })
+    }
+    console.error('[Webhook] Erro inesperado ao consultar n8n:', err.message)
+    return res.status(502).json({ error: `Falha de comunicação com o serviço n8n: ${err.message}` })
   }
 })
 
