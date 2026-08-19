@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { db, FieldValue } from '../services/firebaseAdmin.js'
-import { requireAdmin } from '../middleware/auth.js'
+import { resolvePrompt } from '../services/promptResolver.js'
 import { promptCache } from '../services/promptCache.js'
 
 const router = Router()
@@ -143,6 +143,8 @@ router.get('/:clientId', async (req, res, next) => {
               content: clientDoc.data().content,
               version: clientDoc.data().version ?? 1,
               isGlobal: false,
+              // Ausente = salvo antes do modelo de composição, e vale como 'replace'.
+              promptMode: clientDoc.data().promptMode ?? 'replace',
             }
           } else {
             // Fallback global
@@ -185,7 +187,14 @@ router.get('/:clientId', async (req, res, next) => {
 router.put('/:clientId', async (req, res, next) => {
   try {
     const { clientId } = req.params
-    const { titulo, descricao } = req.body ?? {}
+    const { titulo, descricao, promptModeTitulo, promptModeDescricao } = req.body ?? {}
+
+    // 'append'  → o texto é personalização e SOMA ao núcleo do sistema (padrão)
+    // 'replace' → o texto é o prompt inteiro (modo avançado / legado)
+    const modos = {
+      titulo: promptModeTitulo === 'replace' ? 'replace' : 'append',
+      descricao: promptModeDescricao === 'replace' ? 'replace' : 'append',
+    }
 
     if (!titulo && !descricao) {
       return res.status(400).json({
@@ -200,11 +209,12 @@ router.put('/:clientId', async (req, res, next) => {
       return res.json({ ok: true, message: 'Prompts de teste atualizados com sucesso.' })
     }
 
-    // Para outros clientes em produção, exige role admin
-    if (req.user?.role !== 'admin') {
-      return res.status(403).json({ error: 'Acesso restrito a administradores.' })
-    }
-
+    // Qualquer operador autenticado pode editar prompt do cliente.
+    //
+    // O que torna isso seguro não é a restrição de perfil — é o HISTÓRICO: cada
+    // gravação arquiva a versão anterior em `prompt_history`, então toda alteração é
+    // reversível em um clique (POST /:clientId/restore). Bloquear editor apenas
+    // empurrava o trabalho para um admin sem reduzir o risco de um prompt ruim.
     try {
       const clientRef = db.collection('clients').doc(clientId)
       const clientDoc = await clientRef.get()
@@ -216,36 +226,49 @@ router.put('/:clientId', async (req, res, next) => {
       }
 
       const batch = db.batch()
+      const salvos = []
 
-      if (titulo) {
-        const titleRef = clientRef.collection('prompts').doc('titulo')
-        const currentDoc = await titleRef.get()
-        const currentVersion = currentDoc.exists ? (currentDoc.data().version ?? 1) : 0
+      for (const [type, novoConteudo] of [
+        ['titulo', titulo],
+        ['descricao', descricao],
+      ]) {
+        if (!novoConteudo) continue
 
-        batch.set(titleRef, {
-          content: titulo,
-          version: currentVersion + 1,
+        const ref = clientRef.collection('prompts').doc(type)
+        const atual = await ref.get()
+        const versaoAtual = atual.exists ? atual.data().version ?? 1 : 0
+
+        // Arquiva a versão que está saindo, ANTES de sobrescrever.
+        if (atual.exists && atual.data().content) {
+          const historyRef = clientRef.collection('prompt_history').doc()
+          batch.set(historyRef, {
+            type,
+            content: atual.data().content,
+            version: versaoAtual,
+            replacedBy: req.user.id,
+            replacedByName: req.user.name ?? null,
+            archivedAt: FieldValue.serverTimestamp(),
+          })
+        }
+
+        batch.set(ref, {
+          content: novoConteudo,
+          promptMode: modos[type],
+          version: versaoAtual + 1,
           isActive: true,
           createdBy: req.user.id,
+          createdByName: req.user.name ?? null,
+          createdByRole: req.user.role ?? 'editor',
           updatedAt: FieldValue.serverTimestamp(),
         })
-      }
 
-      if (descricao) {
-        const descRef = clientRef.collection('prompts').doc('descricao')
-        const currentDoc = await descRef.get()
-        const currentVersion = currentDoc.exists ? (currentDoc.data().version ?? 1) : 0
-
-        batch.set(descRef, {
-          content: descricao,
-          version: currentVersion + 1,
-          isActive: true,
-          createdBy: req.user.id,
-          updatedAt: FieldValue.serverTimestamp(),
-        })
+        salvos.push({ type, version: versaoAtual + 1 })
       }
 
       await batch.commit()
+      console.log(
+        `[Prompts] ${req.user.name ?? req.user.id} (${req.user.role}) atualizou ${salvos.map((s) => `${s.type} v${s.version}`).join(', ')} do cliente ${clientId}`
+      )
     } catch (dbErr) {
       console.warn('[PromptsPut] Aviso Firestore (salvando em mock):', dbErr.message)
       if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
@@ -256,6 +279,156 @@ router.put('/:clientId', async (req, res, next) => {
     promptCache.invalidateClient(clientId)
 
     return res.json({ ok: true, message: 'Prompts atualizados com sucesso.' })
+  } catch (err) {
+    next(err)
+  }
+})
+
+
+/**
+ * GET /api/prompts/:clientId/effective
+ *
+ * O prompt que o gerador REALMENTE monta, com a origem do texto-base e as camadas
+ * ativas. Existe porque a tela mostrava um "MODO PADRÃO GLOBAL" que, em cliente com
+ * base de conhecimento e sem prompt próprio, não é o texto executado — o resolver
+ * troca por uma versão alinhada ao RAG. Sem isso, editar prompt é editar às cegas.
+ *
+ * `source`:
+ *   client            → prompt salvo neste cliente (o que a tela edita)
+ *   global            → documento em global_prompts
+ *   knowledge_aligned → cliente TEM base de conhecimento e NÃO tem prompt próprio
+ *   hardcoded         → sem prompt próprio e sem base de conhecimento
+ */
+router.get('/:clientId/effective', async (req, res, next) => {
+  try {
+    const { clientId } = req.params
+    const resultado = {}
+
+    for (const type of ['titulo', 'descricao']) {
+      // Cache invalidado para refletir o estado real do banco, não uma leitura antiga.
+      promptCache.invalidateClient(clientId)
+      const resolved = await resolvePrompt(clientId, type, { title: '(exemplo)', description: '(exemplo)' })
+
+      resultado[type] = {
+        source: resolved.source,
+        version: resolved.version,
+        basePromptContent: resolved.basePromptContent,
+        systemPromptCompleto: resolved.systemPrompt,
+        tamanhoCaracteres: resolved.systemPrompt.length,
+        camadas: {
+          regrasEstruturadas: resolved.approvedRules?.length ?? 0,
+          chunksRag: resolved.ragChunksUsed?.length ?? 0,
+          fewShot: resolved.fewShotExamples?.length ?? 0,
+          skillsAtivas: resolved.skillsApplied ?? [],
+        },
+        regrasDeterministicas: (resolved.approvedRules ?? [])
+          .filter((r) => r.application === 'prepend_exactly' || r.application === 'append_exactly')
+          .map((r) => ({ nome: r.name, aplicacao: r.application })),
+      }
+    }
+
+    return res.json({ clientId, ...resultado })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/prompts/:clientId/history/:type
+ * Versões arquivadas — a rede de segurança que permite liberar a edição.
+ */
+router.get('/:clientId/history/:type', async (req, res, next) => {
+  try {
+    const { clientId, type } = req.params
+    if (!['titulo', 'descricao'].includes(type)) {
+      return res.status(400).json({ error: 'type deve ser "titulo" ou "descricao".' })
+    }
+
+    const snapshot = await db
+      .collection('clients')
+      .doc(clientId)
+      .collection('prompt_history')
+      .where('type', '==', type)
+      .get()
+
+    const versoes = snapshot.docs
+      .map((d) => ({
+        id: d.id,
+        version: d.data().version,
+        replacedByName: d.data().replacedByName ?? d.data().replacedBy ?? null,
+        archivedAt: d.data().archivedAt?.toDate?.().toISOString() ?? null,
+        preview: String(d.data().content ?? '').slice(0, 200),
+        charCount: String(d.data().content ?? '').length,
+      }))
+      .sort((a, b) => (b.version ?? 0) - (a.version ?? 0))
+
+    return res.json({ clientId, type, total: versoes.length, versoes })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/prompts/:clientId/restore
+ * Body: { type, historyId } para voltar a uma versão arquivada
+ *    ou { type, useDefault: true } para voltar ao texto padrão do sistema.
+ */
+router.post('/:clientId/restore', async (req, res, next) => {
+  try {
+    const { clientId } = req.params
+    const { type, historyId, useDefault } = req.body ?? {}
+
+    if (!['titulo', 'descricao'].includes(type)) {
+      return res.status(400).json({ error: 'type deve ser "titulo" ou "descricao".' })
+    }
+    if (!historyId && !useDefault) {
+      return res.status(400).json({ error: 'Informe historyId ou useDefault.' })
+    }
+
+    const clientRef = db.collection('clients').doc(clientId)
+    let conteudo = DEFAULT_PROMPTS[type]
+    let origem = 'padrão do sistema'
+
+    if (historyId) {
+      const historico = await clientRef.collection('prompt_history').doc(historyId).get()
+      if (!historico.exists) return res.status(404).json({ error: 'Versão não encontrada no histórico.' })
+      conteudo = historico.data().content
+      origem = `versão ${historico.data().version}`
+    }
+
+    const ref = clientRef.collection('prompts').doc(type)
+    const atual = await ref.get()
+    const versaoAtual = atual.exists ? atual.data().version ?? 1 : 0
+
+    const batch = db.batch()
+
+    // Restaurar também arquiva o que está saindo: nunca se perde um estado.
+    if (atual.exists && atual.data().content) {
+      batch.set(clientRef.collection('prompt_history').doc(), {
+        type,
+        content: atual.data().content,
+        version: versaoAtual,
+        replacedBy: req.user.id,
+        replacedByName: req.user.name ?? null,
+        archivedAt: FieldValue.serverTimestamp(),
+      })
+    }
+
+    batch.set(ref, {
+      content: conteudo,
+      version: versaoAtual + 1,
+      isActive: true,
+      createdBy: req.user.id,
+      createdByName: req.user.name ?? null,
+      restoredFrom: origem,
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    await batch.commit()
+    promptCache.invalidateClient(clientId)
+
+    console.log(`[Prompts] ${req.user.name ?? req.user.id} restaurou ${type} do cliente ${clientId} a partir de ${origem}`)
+    return res.json({ ok: true, message: `Prompt de ${type} restaurado (${origem}).`, version: versaoAtual + 1 })
   } catch (err) {
     next(err)
   }

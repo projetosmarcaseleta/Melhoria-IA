@@ -8,7 +8,8 @@
     "vite": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node server/index.js",
+    "server": "node --watch server/index.js",
+    "server:once": "node server/index.js",
     "test": "node --test server/tests/*.test.js"
   },
   "dependencies": {

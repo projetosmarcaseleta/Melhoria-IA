@@ -127,12 +127,17 @@ MELHORIA DE DESCRICAO/
 │   │   ├── knowledge.js             # Upload e gestão de arquivos .md do RAG
 │   │   ├── skills.js                # Gestão de habilidades ativas do cliente
 │   │   ├── insights.js              # Métricas e Meta-Prompting com GPT-4o
-│   │   └── anymarket.js             # Proxy PATCH para o AnyMarket via n8n
+│   │   ├── anymarket.js             # Proxy PATCH para o AnyMarket via n8n
+│   │   └── categories.js            # Árvore de categorias do AnyMarket (leitura e sync)
 │   ├── services/
 │   │   ├── firebaseAdmin.js         # Inicialização do Firebase Admin SDK
 │   │   ├── llmService.js            # Abstração unificada da OpenAI API
 │   │   ├── promptResolver.js        # Montagem do System Prompt (Base + RAG + FewShot + Skills)
-│   │   └── ragService.js            # Chunking de Markdown e embeddings semânticos
+│   │   ├── ragService.js            # Chunking de Markdown e embeddings semânticos
+│   │   ├── anymarketClient.js       # Cliente HTTP direto da API v2 do AnyMarket (rate limit, retry, paginação)
+│   │   ├── categoryNormalizer.js    # Chaves canônicas de categoria (base da deduplicação)
+│   │   ├── categoryTreeCache.js     # Cache TTL da árvore de categorias por cliente
+│   │   └── categoryTreeService.js   # Sync, hierarquia, índices e duplicatas de categorias
 │   └── scripts/
 │       └── createOperator.js        # Utilitário para cadastrar/atualizar operadores
 ├── src/
@@ -178,6 +183,9 @@ Todas as rotas `/api/*` (exceto `/health`) exigem o header `Authorization: Beare
 * `PUT /api/skills/:clientId/:skillId` — Configura/ativa skill para o cliente (apenas `admin`).
 * `GET /api/insights/:clientId` — Retorna estatísticas de aprovação, n-gramas e recomendações.
 * `POST /api/insights/:clientId/meta-prompt` — Executa o GPT-4o para sugerir prompt otimizado.
+* `GET /api/categories/tree/:clientId` — Árvore de categorias do AnyMarket (cache → espelho no Firestore → API).
+* `GET /api/categories/duplicates/:clientId` — Diagnóstico: categorias irmãs que já colidem na chave canônica.
+* `POST /api/categories/sync/:clientId` — Ressincroniza a árvore e regrava o espelho no Firestore.
 
 ---
 

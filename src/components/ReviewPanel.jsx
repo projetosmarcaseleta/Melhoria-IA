@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import useStore from '../store/useStore'
 import ProcessingBar from './ProcessingBar'
 import FloatingActionBar from './FloatingActionBar'
@@ -9,6 +9,8 @@ import { parallelProcess } from '../utils/batchUtils'
 import { playCompletionSound, showBrowserNotification } from '../utils/notificationUtils'
 import { collectViolations, countProductsNeedingAttention } from '../utils/validationUtils'
 import { canPatchProduct } from './ProductTable'
+import CategoryModal from './CategoryModal'
+import { fetchCategoryConfig } from '../services/categoryService'
 import { v4 as uuidv4 } from 'uuid'
 
 const CONCURRENCY = 10
@@ -69,6 +71,20 @@ export default function ReviewPanel() {
   const [showBlockedBanner, setShowBlockedBanner] = useState(false)
   const [blockedProducts, setBlockedProducts]     = useState([])
   const [pendingTargets, setPendingTargets]       = useState([])
+
+  // Categoria é OPCIONAL e por produto: o modal só abre no clique do card, e o
+  // botão só aparece se a skill estiver ativa para o cliente.
+  const [categoryProduct, setCategoryProduct] = useState(null)
+  const [categoryEnabled, setCategoryEnabled] = useState(false)
+
+  useEffect(() => {
+    if (!activeClient?.id) { setCategoryEnabled(false); return }
+    let cancelado = false
+    fetchCategoryConfig(activeClient.id)
+      .then((cfg) => { if (!cancelado) setCategoryEnabled(Boolean(cfg?.isActive)) })
+      .catch(() => { if (!cancelado) setCategoryEnabled(false) })
+    return () => { cancelado = true }
+  }, [activeClient?.id])
 
   // Estado de feedback por generationId: { [genId]: 'approved' | 'rejected' | 'edited' }
   const [feedbackState, setFeedbackState] = useState({})
@@ -846,6 +862,19 @@ export default function ReviewPanel() {
                   >
                     <span>🔄 Refazer IA</span>
                   </button>
+
+                  {/* Categoria: ação OPCIONAL e por produto. Só aparece se a skill
+                      estiver ativa para o cliente, e nunca roda em lote sozinha. */}
+                  {categoryEnabled && (
+                    <button
+                      onClick={() => setCategoryProduct(p)}
+                      disabled={isLoading}
+                      title="Analisar e definir a categoria deste produto no AnyMarket"
+                      className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 transition-all flex items-center gap-1"
+                    >
+                      <span>🗂️ Categoria</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1045,6 +1074,14 @@ export default function ReviewPanel() {
           )
         })}
       </div>
+
+      {categoryProduct && (
+        <CategoryModal
+          product={categoryProduct}
+          onClose={() => setCategoryProduct(null)}
+          onApplied={() => setCategoryProduct(null)}
+        />
+      )}
 
       <FloatingActionBar
         onProcess={handleRedoSelected}

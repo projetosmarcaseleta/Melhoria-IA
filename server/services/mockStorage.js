@@ -260,3 +260,78 @@ export function updateMockFeedback(generationId, updates, userId = 'test-operato
   return updated
 }
 
+
+// ── Árvore de categorias falsa do AnyMarket (cliente de teste) ──────────────
+//
+// Criar categoria no AnyMarket é irreversível (§P1 da especificação), então o
+// cliente de teste NUNCA fala com a API real. Esta árvore é de propósito suja:
+// carrega as duplicatas que o funil de dedup precisa reconhecer, além de um nó
+// órfão e um nome genérico já existente.
+const MOCK_CATEGORY_TREE = [
+  { id: 1000, name: 'Automotivo' },
+  { id: 1001, name: 'AUTOMOTIVO' },                                       // duplicata de 1000 (slugKey)
+  { id: 1002, name: 'Acessorios', parent: { id: 1000 } },
+  { id: 1003, name: 'Tapetes e Carpetes', parent: { id: 1002 } },
+  { id: 1004, name: 'Pecas', parent: { id: 1000 } },
+  { id: 1005, name: 'Acessorios Automotivos', parent: { id: 1000 } },
+  { id: 1006, name: 'Automotivos Acessorios', parent: { id: 1000 } },     // duplicata de 1005 (tokenSetKey)
+  { id: 1010, name: 'Casa e Decoracao' },
+  { id: 1011, name: 'Cozinha', parent: { id: 1010 } },
+  { id: 1012, name: 'Panelas', parent: { id: 1011 } },
+  { id: 1013, name: 'Panela', parent: { id: 1011 } },                     // duplicata de 1012 (singular/plural)
+  { id: 1020, name: 'Outros' },                                           // genérico que já existe
+  { id: 1030, name: 'Pneus', parent: { id: 9999 } },                      // órfão: pai inexistente
+  { id: 1031, name: 'Tapete Michelin 205/55', parent: { id: 1002 } },     // nome com marca e medida
+]
+
+/** Árvore de categorias em memória do cliente de teste (nunca vai à API real). */
+export function getMockCategoryTree() {
+  return MOCK_CATEGORY_TREE.map((node) => ({ ...node }))
+}
+
+// ── Propostas e vínculos de categoria (cliente de teste) ────────────────────
+const mockCategoryProposals = new Map()
+const mockAttachments = new Map()
+let mockAttachmentSeq = 0
+
+const proposalKey = (clientId, proposalId) => `${clientId}::${proposalId}`
+
+export function saveMockCategoryProposal(clientId, proposalId, data) {
+  const record = { ...data, id: proposalId, clientId }
+  mockCategoryProposals.set(proposalKey(clientId, proposalId), record)
+  return record
+}
+
+export function getMockCategoryProposal(clientId, proposalId) {
+  return mockCategoryProposals.get(proposalKey(clientId, proposalId)) ?? null
+}
+
+export function listMockCategoryProposals(clientId, status = null) {
+  return [...mockCategoryProposals.values()]
+    .filter((p) => p.clientId === clientId && (!status || p.status === status))
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+}
+
+export function saveMockAttachment(clientId, record) {
+  const id = record.id ?? `attach-${++mockAttachmentSeq}`
+  const saved = { ...record, id, clientId }
+  mockAttachments.set(`${clientId}::${id}`, saved)
+  return saved
+}
+
+export function getMockAttachment(clientId, attachmentId) {
+  return mockAttachments.get(`${clientId}::${attachmentId}`) ?? null
+}
+
+export function listMockAttachments(clientId, productId = null) {
+  return [...mockAttachments.values()].filter(
+    (a) => a.clientId === clientId && (!productId || a.productId === String(productId))
+  )
+}
+
+/** Só para testes: zera propostas e vínculos em memória. */
+export function resetMockCategoryState() {
+  mockCategoryProposals.clear()
+  mockAttachments.clear()
+  mockAttachmentSeq = 0
+}

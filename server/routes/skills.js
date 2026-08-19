@@ -39,6 +39,36 @@ export const DEFAULT_SKILLS = [
     defaultConfig: { maxLength: 60 },
     scope: 'titulo',
   },
+  {
+    id: 'category_suggestion',
+    name: '🗂️ Sugestão de Categorias (AnyMarket)',
+    description:
+      'Habilita o botão de categoria no card do produto: analisa título e descrição, sugere o caminho hierárquico no padrão da árvore do cliente, deduplica e — após confirmação — cria no AnyMarket e substitui a categoria do produto.',
+    // O escopo 'categoria' é ESTRITO no promptResolver: esta injeção nunca vaza para
+    // os prompts de título/descrição, e regras marcadas 'ambos' não entram aqui.
+    promptInjection:
+      'REGRA DA SKILL (POLÍTICA DE CATEGORIAS DO CLIENTE):\nRespeite as seguintes preferências de taxonomia ao propor o caminho: {{taxonomyNotes}}',
+    defaultConfig: {
+      taxonomyNotes: 'Preferir árvore rasa (departamento > categoria > subcategoria) e nomes no plural.',
+      maxDepth: 'auto',
+      namingConvention: 'derive_from_tree',
+      preferExistingRoots: true,
+      allowNewRoot: 'confirm',
+      definitionPriceScope: 'SKU',
+      priceFactor: 1,
+      partnerIdPrefix: 'CRIA',
+      exactMatchOnly: false,
+      fuzzyThreshold: 0.88,
+      globalHintThreshold: 0.72,
+      maxNewNodesPerApproval: 10,
+      attachMode: 'confirm_each',
+      maxAutoAttachPerBatch: 50,
+      skipWhenSameLeaf: true,
+      onlyWhenEmpty: false,
+      forbiddenNodeNames: 'Outros, Diversos, Geral, Sem Categoria',
+    },
+    scope: 'categoria',
+  },
 ]
 
 import { isTestClient, getMockSkills, saveMockSkill } from '../services/mockStorage.js'

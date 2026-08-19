@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import apiClient from '../services/apiClient'
 import useStore from '../store/useStore'
+import PromptHistoryPanel from './PromptHistoryPanel'
 
 // Fallbacks de segurança para garantir que o prompt default NUNCA venha vazio
 const FALLBACK_DEFAULT_PROMPTS = {
@@ -119,14 +120,18 @@ export default function ConfigModal() {
 
   // ── Prompts ──────────────────────────────────────────────────────────────
   const [customPrompts, setCustomPrompts] = useState({ titulo: '', descricao: '' })
+  // 'append' = personalização que soma ao núcleo; 'replace' = prompt inteiro (legado)
+  const [promptModes, setPromptModes] = useState({ titulo: 'append', descricao: 'append' })
   const [defaultPrompts, setDefaultPrompts] = useState(FALLBACK_DEFAULT_PROMPTS)
   const [promptsLoading, setPromptsLoading] = useState(false)
   const [promptsError, setPromptsError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [promptTab, setPromptTab] = useState('descricao') // 'descricao' | 'titulo'
 
-  // Carrega prompts do cliente ativo via backend Express/Firestore
-  useEffect(() => {
+  // Carrega prompts do cliente ativo via backend Express/Firestore.
+  // Nomeado (em vez de inline no efeito) porque a restauração de versão precisa
+  // recarregar a tela depois de trocar o prompt vigente.
+  const carregarPrompts = () => {
     if (activeClient?.id) {
       setPromptsLoading(true)
       setPromptsError('')
@@ -140,18 +145,34 @@ export default function ConfigModal() {
             descricao: loadedDefaults.descricao || FALLBACK_DEFAULT_PROMPTS.descricao,
           })
 
+          // No modelo aditivo a caixa começa VAZIA quando o cliente não tem prompt
+          // próprio. Pré-preencher com o padrão fazia o operador salvar o núcleo
+          // inteiro como "instrução adicional" — duplicando tudo no prompt final.
           setCustomPrompts({
-            titulo: data?.titulo?.content || loadedDefaults.titulo || FALLBACK_DEFAULT_PROMPTS.titulo,
-            descricao: data?.descricao?.content || loadedDefaults.descricao || FALLBACK_DEFAULT_PROMPTS.descricao,
+            titulo: data?.titulo?.isGlobal ? '' : data?.titulo?.content || '',
+            descricao: data?.descricao?.isGlobal ? '' : data?.descricao?.content || '',
+          })
+
+          // Prompt salvo antes da mudança não tem promptMode e vale como 'replace':
+          // é o texto inteiro, não uma personalização. Preservado para não alterar o
+          // resultado de quem já está em produção.
+          setPromptModes({
+            titulo: data?.titulo?.isGlobal ? 'append' : data?.titulo?.promptMode ?? 'replace',
+            descricao: data?.descricao?.isGlobal ? 'append' : data?.descricao?.promptMode ?? 'replace',
           })
         })
         .catch((err) => {
           console.error('[ConfigModal] Erro ao carregar prompts do servidor, usando fallbacks:', err)
           setDefaultPrompts(FALLBACK_DEFAULT_PROMPTS)
-          setCustomPrompts(FALLBACK_DEFAULT_PROMPTS)
+          setCustomPrompts({ titulo: '', descricao: '' })
         })
         .finally(() => setPromptsLoading(false))
     }
+  }
+
+  useEffect(() => {
+    carregarPrompts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeClient?.id])
 
   const updateCustomPrompt = (field, value) => {
@@ -173,7 +194,12 @@ export default function ConfigModal() {
     activeClient?.slug === 'teste-marca-seleta' ||
     Boolean(activeClient?.isMock)
 
-  const canEditPrompt = auth.user?.role === 'admin' || isTestMode
+  // Todo operador autenticado edita prompt do cliente. A rede de segurança não é a
+  // restrição de perfil — é o histórico versionado no backend, que arquiva a versão
+  // anterior a cada gravação e permite restaurar (POST /api/prompts/:clientId/restore).
+  // Bloquear o editor apenas empurrava o trabalho para um admin, sem reduzir o risco
+  // de um prompt ruim entrar em produção.
+  const canEditPrompt = true
 
   const save = async () => {
     try {
@@ -203,13 +229,22 @@ export default function ConfigModal() {
         }
       }
 
-      // 3. Salvar prompts no backend se em modo customizado e tiver permissão
-      if (activeClient?.id && form.promptMode === 'custom' && canEditPrompt) {
+      // 3. Salvar prompts no backend se em modo customizado e tiver permissão.
+      //
+      // As duas caixas vazias significam "sem personalização" — o cliente fica só com o
+      // núcleo do sistema, que é o comportamento correto e não precisa gravar nada. Sem
+      // esta guarda, salvar sem escrever nada devolvia 400 do backend ("informe titulo ou
+      // descricao") justamente no primeiro contato de um cliente novo com a tela.
+      const temPersonalizacao = customPrompts.titulo?.trim() || customPrompts.descricao?.trim()
+
+      if (activeClient?.id && form.promptMode === 'custom' && canEditPrompt && temPersonalizacao) {
         await apiClient.put(
           `/api/prompts/${activeClient.id}`,
           {
             titulo: customPrompts.titulo,
             descricao: customPrompts.descricao,
+            promptModeTitulo: promptModes.titulo,
+            promptModeDescricao: promptModes.descricao,
           }
         )
       }
@@ -357,7 +392,7 @@ export default function ConfigModal() {
                     Prompts da IA (Instruções do Sistema)
                   </h3>
                   <p className="text-xs text-slate-300">
-                    Selecione o modo de instrução enviado para a IA durante o processamento.
+                    O núcleo do sistema vale sempre. As instruções deste cliente SOMAM ao núcleo — você não precisa reescrever tudo.
                   </p>
                 </div>
               </div>
@@ -374,7 +409,7 @@ export default function ConfigModal() {
                   }`}
                 >
                   <span>📋</span>
-                  <span>Prompt Default</span>
+                  <span>Núcleo do Sistema</span>
                 </button>
                 <button
                   type="button"
@@ -386,7 +421,7 @@ export default function ConfigModal() {
                   }`}
                 >
                   <span>✨</span>
-                  <span>Customizado (Cliente)</span>
+                  <span>Instruções deste Cliente</span>
                 </button>
               </div>
             </div>
@@ -402,7 +437,7 @@ export default function ConfigModal() {
                       ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
                       : 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-300'
                   }`}>
-                    {form.promptMode === 'default' ? 'MODO PADRÃO GLOBAL' : 'MODO CUSTOMIZADO DO CLIENTE'}
+                    {form.promptMode === 'default' ? 'NÚCLEO — SEMPRE ATIVO, SOMENTE LEITURA' : 'INSTRUÇÕES ADICIONAIS DESTE CLIENTE'}
                   </span>
 
                   {/* Sub-tabs: Descrição vs Título */}
@@ -454,11 +489,11 @@ export default function ConfigModal() {
                   <div className="flex items-center justify-between text-[11px] text-slate-300">
                     <span className="font-semibold text-slate-200">
                       {form.promptMode === 'default'
-                        ? `Prompt Padrão de ${promptTab === 'descricao' ? 'Descrição' : 'Título'} (Visualização Somente Leitura):`
-                        : `Editor do Prompt Customizado de ${promptTab === 'descricao' ? 'Descrição' : 'Título'}:`}
+                        ? `Núcleo de ${promptTab === 'descricao' ? 'Descrição' : 'Título'} — aplicado a todos os clientes (leitura):`
+                        : `O que este cliente quer a MAIS em ${promptTab === 'descricao' ? 'Descrição' : 'Título'}:`}
                     </span>
                     <span className="text-slate-400 font-mono text-[10px]">
-                      Variáveis aceitas: <code>{'{{title}}'}</code>, <code>{'{{description}}'}</code>
+                      Os dados do produto são enviados separadamente — não use {{title}}/{{description}}
                     </span>
                   </div>
 
@@ -477,6 +512,15 @@ export default function ConfigModal() {
                         : 'bg-slate-900 text-white border border-indigo-500 focus:ring-2 focus:ring-indigo-500/30'
                     }`}
                   />
+
+                  {/* Rede de segurança da edição liberada: histórico + restauração. */}
+                  {activeClient?.id && !isTestMode && (
+                    <PromptHistoryPanel
+                      clientId={activeClient.id}
+                      type={promptTab}
+                      onRestored={() => carregarPrompts()}
+                    />
+                  )}
                 </div>
               )}
             </div>
@@ -491,7 +535,7 @@ export default function ConfigModal() {
                 <span>🧪 Modo Teste:</span> Edição e salvamento de prompts liberados para todos os operadores.
               </span>
             ) : (
-              !canEditPrompt && 'Modo leitura (Apenas admins salvam edições)'
+              'Toda alteração de prompt fica versionada e pode ser restaurada.'
             )}
           </span>
           <div className="flex items-center gap-3">

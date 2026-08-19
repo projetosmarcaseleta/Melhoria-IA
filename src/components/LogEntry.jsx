@@ -1,6 +1,7 @@
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
 import useStore from '../store/useStore'
 import { patchProduct } from '../services/anymarketService'
+import { undoCategoryAttach } from '../services/categoryService'
 
 const DIFF_STYLES = {
   variables: {
@@ -36,19 +37,35 @@ export default function LogEntry({ log }) {
   const setLogStatus = useStore((s) => s.setLogStatus)
   const addToast = useStore((s) => s.addToast)
   const updateProductStatus = useStore((s) => s.updateProductStatus)
+  const activeClient = useStore((s) => s.activeClient)
 
   const titulo = log.changes.find((c) => c.field === 'TITULO')
   const descricao = log.changes.find((c) => c.field === 'DESCRIÇÃO')
+  const categoria = log.changes.find((c) => c.field === 'CATEGORIA')
 
   const handleUndo = async () => {
-    if (!config.gumgaToken) { addToast('error', 'Configure o token da AnyMarket antes de reverter.'); return }
     try {
+      // Registro de categoria tem caminho próprio: o PATCH de categoria vai direto à
+      // API v2 (decisão D2), enquanto patchProduct passa pelo n8n e só leva
+      // título/descrição. Usar patchProduct aqui apagaria o texto do anúncio.
+      if (categoria) {
+        if (!log.categoryAttachmentId) {
+          addToast('error', 'Este registro de categoria não tem vínculo rastreado para reverter.')
+          return
+        }
+        await undoCategoryAttach(activeClient?.id, log.categoryAttachmentId)
+        setLogStatus(log.logId, 'undone')
+        addToast('success', 'Categoria revertida para a anterior.')
+        return
+      }
+
+      if (!config.gumgaToken) { addToast('error', 'Configure o token da AnyMarket antes de reverter.'); return }
       await patchProduct(log.productId, log.originalData.title, log.originalData.description, config.gumgaToken)
       setLogStatus(log.logId, 'undone')
       updateProductStatus(log.productId, 'undone')
       addToast('success', 'Pronto! Anúncio revertido.')
     } catch (e) {
-      addToast('error', `Erro ao desfazer ${log.productId}: ` + e.message)
+      addToast('error', `Erro ao desfazer ${log.productId}: ` + (e.response?.data?.error ?? e.message))
     }
   }
 
@@ -78,6 +95,17 @@ export default function LogEntry({ log }) {
           )}
         </div>
       </div>
+
+      {categoria && (
+        <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Categoria</span>
+          <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs">
+            <span style={{ color: 'var(--accent-rose)' }}>{categoria.before}</span>
+            <span style={{ color: 'var(--text-muted)' }}>→</span>
+            <span style={{ color: 'var(--accent-emerald)' }}>{categoria.after}</span>
+          </div>
+        </div>
+      )}
 
       {titulo && (
         <div style={{ borderBottom: '1px solid var(--border-subtle)' }}>

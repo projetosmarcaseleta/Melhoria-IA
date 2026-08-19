@@ -98,6 +98,22 @@ export default function HelpCenter() {
       answer: 'Navegue até a aba "Skills" (⚡) e certifique-se de que a habilidade "Filtro de Termos e Tamanho" está ativada. Você também pode ajustar a instrução do prompt em Configurações (⚙️).',
     },
     {
+      id: 'err-5',
+      category: 'erros',
+      tag: 'Categorias',
+      question: 'Ao abrir 🗂️ Categoria aparece "árvore de categorias não sincronizada".',
+      answer:
+        'É esperado no primeiro uso de cada cliente. O CRIA precisa ler a árvore de categorias do AnyMarket uma vez para poder comparar e não criar duplicata. No próprio aviso há o botão "⟳ Sincronizar árvore agora" — leva cerca de um minuto em contas grandes, e o ritmo é lento de propósito para não estourar o limite de requisições da API do AnyMarket. Se a sincronização for interrompida no meio, clicar de novo continua de onde parou. Depois disso, as próximas análises são instantâneas.',
+    },
+    {
+      id: 'err-6',
+      category: 'erros',
+      tag: 'Permissões',
+      question: 'Erro: "Token AnyMarket não gravado no cadastro deste cliente".',
+      answer:
+        'A sugestão de categorias usa somente o token salvo no cadastro do cliente — nunca o que fica no navegador. Se você digitou o token na barra de aviso e não salvou em Configurações (⚙️) → Token AnyMarket, o envio de título e descrição funciona, mas as categorias não. A gravação no cadastro do cliente exige perfil admin: peça a um administrador para salvar uma vez.',
+    },
+    {
       id: 'feat-1',
       category: 'funcionalidades',
       tag: 'Aprendizado IA',
@@ -109,7 +125,8 @@ export default function HelpCenter() {
       category: 'funcionalidades',
       tag: 'RAG & Arquivos',
       question: 'Para que serve a aba Base RAG (📚)?',
-      answer: 'A aba Base RAG permite fazer upload de arquivos em Markdown (.md) contendo manuais, diretrizes da marca ou regras de SEO. A IA busca por similaridade semântica (embeddings) os trechos mais relevantes do arquivo antes de gerar cada descrição.',
+      answer:
+        'A aba Base RAG permite subir arquivos Markdown (.md) com manuais, diretrizes da marca ou regras de SEO. Importante: o CRIA injeta o conteúdo INTEIRO do arquivo no prompt de descrição, na ordem original — não recorta "os trechos mais relevantes". Isso é intencional: um manual de marca vale por completo para qualquer produto, e recortar por relevância fazia partes obrigatórias (como o bloco institucional) ficarem de fora. Observação: a Base RAG entra apenas no prompt de DESCRIÇÃO, nunca no de título.',
     },
     {
       id: 'feat-3',
@@ -137,7 +154,72 @@ export default function HelpCenter() {
       category: 'troubleshooting',
       tag: 'Configurações',
       question: 'Como restaurar os prompts originais do sistema?',
-      answer: 'Abra as Configurações (⚙️), acesse a aba Prompts, limpe o campo customizado e salve. O sistema restaurará o template padrão global automaticamente.',
+      answer:
+        'Abra as Configurações (⚙️) → aba Prompts e use o botão "↺ Voltar ao padrão do sistema", dentro de "🕐 Histórico de versões". Ele descarta a personalização do cliente e volta ao núcleo padrão. A versão que estava valendo é arquivada no histórico, então você pode voltar atrás se se arrepender. Atenção: apenas apagar o texto da caixa e salvar NÃO restaura nada — caixa vazia significa "sem personalização" e o sistema simplesmente não grava.',
+    },
+    {
+      id: 'nov-1',
+      category: 'novidades',
+      tag: 'Categorias',
+      question: 'Para que serve o botão 🗂️ Categoria no card do produto?',
+      answer:
+        'Ele analisa o título e a descrição do produto e sugere a categoria correta dentro da árvore do AnyMarket. Ao clicar, abre um resumo "de → para": a categoria atual do produto, a sugerida nível por nível (✓ verde = já existe, ✦ azul = será criada) e um bloco dizendo exatamente o que acontece se você confirmar. Só depois da sua confirmação o CRIA cria a categoria que falta e move o produto. É opcional e por produto: nada roda em lote automático. Se o botão não aparecer, a habilidade "🗂️ Sugestão de Categorias" está desativada para esse cliente na aba Skills (⚡).',
+    },
+    {
+      id: 'nov-2',
+      category: 'novidades',
+      tag: 'Categorias',
+      question: 'Por que às vezes o CRIA diz que a categoria já existe ou sugere usar outra?',
+      answer:
+        'Porque ele compara a sugestão com a árvore real do cliente antes de criar qualquer coisa, ignorando diferenças de caixa, acento e plural: "AUTOMOTIVO", "Automotivo" e "automotivos" são a mesma categoria para o CRIA. Três resultados possíveis: (1) o produto já está na categoria certa — aparece um aviso verde e nenhum botão de escrita, porque não há nada a fazer; (2) o caminho existe inteiro — ele só move o produto, sem criar nada; (3) existe algo parecido em outro galho — aparece a lista de "Categorias parecidas que já existem" com um botão "Usar esta" em cada uma, para você reaproveitar em vez de criar duplicata.',
+    },
+    {
+      id: 'nov-3',
+      category: 'novidades',
+      tag: 'Categorias',
+      question: 'Criei a categoria errada. Como desfazer?',
+      answer:
+        'A troca de categoria do produto é reversível: vá na aba Logs (📋), encontre o registro com a linha CATEGORIA e clique em "↩️ Desfazer". O produto volta para a categoria anterior, que fica gravada no momento da troca. Já a categoria criada na árvore do AnyMarket NÃO é apagada pelo desfazer — ela fica lá, vazia e inofensiva. Se quiser removê-la de fato, isso é feito no painel do AnyMarket.',
+    },
+    {
+      id: 'nov-4',
+      category: 'novidades',
+      tag: 'Prompts',
+      question: 'Agora eu consigo editar o prompt. Preciso reescrever tudo?',
+      answer:
+        'Não — e não deve. O prompt tem duas partes: o NÚCLEO DO SISTEMA (regras de SEO, fidelidade aos dados e o protocolo de resposta), que vale sempre e é somente leitura; e as INSTRUÇÕES DESTE CLIENTE, que é a caixa que você edita. O que você escreve SOMA ao núcleo e tem prioridade sobre ele. Então bastam duas ou três linhas do que é específico daquele cliente — por exemplo "sempre inclua a voltagem em eletroportáteis" — sem copiar o prompt inteiro. Cliente sem nenhuma personalização funciona normalmente, só com o núcleo.',
+    },
+    {
+      id: 'nov-5',
+      category: 'novidades',
+      tag: 'Prompts',
+      question: 'Editei o prompt e o resultado piorou. Como voltar?',
+      answer:
+        'Em Configurações (⚙️) → Prompts, abra "🕐 Histórico de versões". Cada alteração salva arquiva a versão anterior com autor, data e prévia do texto, e você restaura com um clique. A restauração também arquiva a versão que está saindo, então nada se perde e você pode ir e voltar quantas vezes quiser. Dica: mude uma coisa por vez e teste em 5 produtos variados — prompt que acerta uma categoria costuma errar outra.',
+    },
+    {
+      id: 'nov-6',
+      category: 'novidades',
+      tag: 'Prompts',
+      question: 'O que NÃO devo mudar no prompt?',
+      answer:
+        'O texto gerado vai direto para o campo do anúncio, sem ninguém no meio. Por isso o PROTOCOLO DE RESPOSTA ("retorne apenas o texto, sem explicação") é obrigatório e o sistema o reforça automaticamente no fim do prompt — sem ele, a IA responderia "Aqui está o título otimizado: ..." e isso inteiro viraria o título do anúncio. Também não adianta pedir coisas que o sistema faz por código: o título é sempre convertido para Title Case, o limite de caracteres da Skill sempre corta, e blocos institucionais fixos são inseridos automaticamente (repeti-los no prompt gera texto duplicado).',
+    },
+    {
+      id: 'nov-7',
+      category: 'novidades',
+      tag: 'RAG & Arquivos',
+      question: 'Reenviei o mesmo .md e o antigo desapareceu. Isso é normal?',
+      answer:
+        'Sim, agora é o comportamento correto: subir um arquivo com o MESMO nome substitui a versão anterior, em vez de acumular duas cópias. Antes, o reenvio criava um segundo documento idêntico — e como o CRIA injeta todos os chunks no prompt, as diretrizes da marca entravam duplicadas em toda descrição. Atenção a um efeito colateral: as regras que você havia aprovado daquele documento também são removidas, porque foram extraídas do conteúdo antigo. Depois de reenviar, revise as regras na aba Base RAG.',
+    },
+    {
+      id: 'nov-8',
+      category: 'novidades',
+      tag: 'RAG & Arquivos',
+      question: 'Um documento aparece com "0 chunk(s)" na Base RAG. O que significa?',
+      answer:
+        'Que o upload não terminou: o registro do arquivo foi criado, mas o conteúdo não foi indexado — então esse documento não influencia nenhuma geração, mesmo aparecendo na lista. Acontecia com arquivos grandes, e já foi corrigido. Se você vê um documento com muitos caracteres e 0 chunks, exclua e reenvie. Documento saudável mostra a contagem de chunks e de regras extraídas.',
     },
   ]
 
@@ -259,6 +341,7 @@ export default function HelpCenter() {
           <div className="flex items-center gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-xl">
             {[
               { id: 'all', label: 'Todas' },
+              { id: 'novidades', label: '🆕 Novidades' },
               { id: 'erros', label: '🔴 Erros' },
               { id: 'funcionalidades', label: '⚡ Recursos' },
               { id: 'troubleshooting', label: '🛠️ Soluções' },
@@ -313,6 +396,13 @@ export default function HelpCenter() {
                     className="w-full p-4 text-left flex items-center justify-between gap-4 group"
                   >
                     <div className="flex items-center gap-3 min-w-0">
+                      {/* Selo NOVO destaca o que mudou nesta versão sem obrigar o
+                          operador a filtrar por categoria para descobrir. */}
+                      {item.category === 'novidades' && (
+                        <span className="shrink-0 px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider bg-emerald-500/15 border border-emerald-500/40 text-emerald-300">
+                          Novo
+                        </span>
+                      )}
                       <span className="shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-800 border border-slate-700 text-indigo-300">
                         {item.tag}
                       </span>

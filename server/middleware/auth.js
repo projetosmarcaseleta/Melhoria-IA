@@ -1,5 +1,60 @@
 import { adminAuth, db } from '../services/firebaseAdmin.js'
 import { TEST_OPERATOR } from '../services/mockStorage.js'
+import { firestoreMeter } from '../services/firestoreMeter.js'
+
+/**
+ * Cache do perfil do operador (uid → dados), com TTL.
+ *
+ * Invalidado explicitamente quando o cargo muda (ver routes/operators.js), para uma
+ * promoção a admin não esperar o TTL.
+ */
+class OperatorCache {
+  constructor(ttlMs = 10 * 60 * 1000) {
+    this.ttlMs = ttlMs
+    this.cache = new Map()
+    this.hits = 0
+    this.misses = 0
+  }
+
+  get(uid) {
+    const entry = this.cache.get(uid)
+    if (!entry || Date.now() > entry.expiresAt) {
+      if (entry) this.cache.delete(uid)
+      this.misses++
+      return null
+    }
+    this.hits++
+    return entry.data
+  }
+
+  set(uid, data) {
+    this.cache.set(uid, { data, expiresAt: Date.now() + this.ttlMs })
+  }
+
+  invalidate(uid) {
+    return this.cache.delete(uid)
+  }
+
+  clear() {
+    const n = this.cache.size
+    this.cache.clear()
+    return n
+  }
+
+  stats() {
+    const total = this.hits + this.misses
+    return {
+      size: this.cache.size,
+      hits: this.hits,
+      misses: this.misses,
+      // Cada hit é uma leitura do Firestore que NÃO aconteceu.
+      leiturasEvitadas: this.hits,
+      hitRate: total > 0 ? (this.hits / total).toFixed(3) : 0,
+    }
+  }
+}
+
+export const operatorCache = new OperatorCache()
 
 /**
  * Middleware de autenticação.
@@ -36,15 +91,34 @@ export async function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'Token de autenticação inválido ou expirado.' })
     }
 
-    // Buscar perfil do operador no Firestore (coleção 'operators') com fallback
-    let operatorData = null
-    try {
-      const operatorDoc = await db.collection('operators').doc(decodedToken.uid).get()
-      if (operatorDoc.exists) {
-        operatorData = operatorDoc.data()
+    // Perfil do operador — com cache em memória.
+    //
+    // Antes, TODA requisição autenticada lia `operators/{uid}` no Firestore. Publicar 50
+    // produtos são 50 requisições, logo 50 leituras para descobrir o mesmo cargo do mesmo
+    // operador. Era o único multiplicador de leitura sem limite do projeto, e no plano
+    // Spark (50k leituras/dia) isso importa. Cargo de operador muda raramente; TTL de
+    // 10 minutos é uma janela aceitável para uma promoção a admin passar a valer.
+    let operatorData = operatorCache.get(decodedToken.uid)
+
+    if (!operatorData) {
+      if (firestoreMeter.circuitoAberto()) {
+        // Firestore fora por cota: seguir com o perfil mínimo em vez de tentar de novo a
+        // cada clique. `role` cai para 'editor' — o menos privilegiado.
+        console.warn('[Auth] Disjuntor aberto — seguindo sem ler o perfil do operador.')
+      } else {
+        try {
+          const operatorDoc = await db.collection('operators').doc(decodedToken.uid).get()
+          firestoreMeter.record('auth:operators', 'reads', 1)
+
+          if (operatorDoc.exists) {
+            operatorData = operatorDoc.data()
+            operatorCache.set(decodedToken.uid, operatorData)
+          }
+        } catch (dbErr) {
+          const { tipo } = firestoreMeter.classify(dbErr)
+          console.warn(`[Auth] Aviso ao buscar operador no Firestore (${tipo}):`, dbErr.message)
+        }
       }
-    } catch (dbErr) {
-      console.warn('[Auth] Aviso ao buscar operador no Firestore (possível cota):', dbErr.message)
     }
 
     req.user = {

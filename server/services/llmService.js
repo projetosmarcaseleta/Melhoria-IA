@@ -52,3 +52,50 @@ export async function generateWithLLM({
   return response.choices[0].message.content
 }
 
+
+/**
+ * Gera JSON validado por schema (Structured Outputs).
+ *
+ * Usado pelo classificador de categorias, onde a saída alimenta código (funil de
+ * dedup, criação na API) e não um humano — texto livre ali significaria parsing
+ * frágil. `strict: true` faz a própria API rejeitar saída fora do schema.
+ *
+ * NÃO altera generateWithLLM: o caminho de título/descrição continua idêntico.
+ *
+ * @param {object} params
+ * @param {string} params.systemPrompt
+ * @param {string} params.userMessage
+ * @param {{name: string, schema: object}} params.jsonSchema
+ * @returns {Promise<object>} objeto já parseado
+ */
+export async function generateStructured({
+  systemPrompt,
+  userMessage,
+  jsonSchema,
+  model = 'gpt-4o-mini',
+  temperature = 0.1,
+}) {
+  const openai = getClient()
+
+  const response = await openai.chat.completions.create({
+    model,
+    temperature,
+    messages: [
+      { role: 'system', content: String(systemPrompt ?? '').trim() },
+      { role: 'user', content: String(userMessage ?? '').trim() },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: { name: jsonSchema.name, schema: jsonSchema.schema, strict: true },
+    },
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error('LLM retornou resposta estruturada vazia.')
+
+  try {
+    return JSON.parse(content)
+  } catch (err) {
+    throw new Error(`LLM retornou JSON inválido: ${err.message}`)
+  }
+}

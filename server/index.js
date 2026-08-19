@@ -11,13 +11,12 @@ import anymarketRouter from './routes/anymarket.js'
 import knowledgeRouter from './routes/knowledge.js'
 import insightsRouter from './routes/insights.js'
 import skillsRouter from './routes/skills.js'
+import categoriesRouter from './routes/categories.js'
 import operatorsRouter from './routes/operators.js'
+import diagnosticsRouter from './routes/diagnostics.js'
 
 // Middleware
 import { requireAuth } from './middleware/auth.js'
-
-// Manter rota antiga para retrocompatibilidade durante migração
-import aiRouter from './routes/ai.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -27,10 +26,6 @@ app.use(express.json({ limit: '10mb' }))
 
 // ── Rotas públicas ─────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
-
-// ── Rota antiga (sem auth) — retrocompatibilidade ──────────────
-// Remover após migração completa do frontend
-app.use('/api', aiRouter)
 
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -60,7 +55,9 @@ app.use('/api/anymarket', requireAuth, anymarketRouter)
 app.use('/api/knowledge', requireAuth, knowledgeRouter)
 app.use('/api/insights', requireAuth, insightsRouter)
 app.use('/api/skills', requireAuth, skillsRouter)
+app.use('/api/categories', requireAuth, categoriesRouter)
 app.use('/api/operators', requireAuth, operatorsRouter)
+app.use('/api/diagnostics', requireAuth, diagnosticsRouter)
 
 // Catch-all para SPA Frontend (qualquer rota que não seja /api)
 app.use((req, res, next) => {

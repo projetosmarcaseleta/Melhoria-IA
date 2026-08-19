@@ -95,7 +95,10 @@ export default function KnowledgeManager() {
       fetchRules()
     } catch (err) {
       console.error('[KnowledgeManager] Erro ao deletar:', err)
-      addToast('error', 'Erro ao deletar documento.')
+      // Mostra o motivo real e recarrega a lista: sumir da tela um documento que
+      // continua no banco é pior que o erro, porque só aparece no próximo F5.
+      addToast('error', err.response?.data?.error ?? 'Erro ao deletar documento.')
+      fetchDocuments()
     }
   }
 
@@ -299,6 +302,14 @@ export default function KnowledgeManager() {
                       <p className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
                         {doc.chunkCount ?? 0} chunk(s) • {doc.ruleCount ?? 0} regra(s) • {(doc.charCount ?? 0).toLocaleString()} chars
                       </p>
+                      {/* O id fica visível porque dois documentos podem ter o MESMO nome
+                          (reenvios antigos). Sem ele, apagar um e ver o outro parece que
+                          a exclusão não funcionou. */}
+                      {documents.filter((d) => d.filename === doc.filename).length > 1 && (
+                        <p className="text-[10px] font-mono" style={{ color: 'var(--accent-amber)' }}>
+                          ⚠ nome duplicado · id {doc.id.slice(0, 8)}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <button

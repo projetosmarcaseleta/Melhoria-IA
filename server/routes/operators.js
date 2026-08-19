@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { adminAuth, db, FieldValue } from '../services/firebaseAdmin.js'
-import { requireAdmin } from '../middleware/auth.js'
+import { requireAdmin, operatorCache } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -117,6 +117,10 @@ router.patch('/:uid', requireAdmin, async (req, res, next) => {
     }
 
     await docRef.update(updates)
+
+    // Invalida o cache do perfil: promoção a admin precisa valer no próximo clique,
+    // não depois do TTL de 10 minutos.
+    operatorCache.invalidate(uid)
 
     // Atualizar displayName no Firebase Auth se o nome mudou
     if (name) {

@@ -3,6 +3,7 @@ import { db, FieldValue } from '../services/firebaseAdmin.js'
 import { chunkMarkdown, generateEmbedding } from '../services/ragService.js'
 import { extractRulesFromMarkdown } from '../services/ruleExtractor.js'
 import { promptCache } from '../services/promptCache.js'
+import { bulkDelete, bulkSet } from '../utils/firestoreBulk.js'
 
 const router = Router()
 
@@ -18,6 +19,47 @@ router.post('/:clientId', async (req, res, next) => {
 
     if (!filename || !content) {
       return res.status(400).json({ error: 'filename e content são obrigatórios.' })
+    }
+
+    // 0. Reenvio do MESMO arquivo substitui a versão anterior.
+    //
+    // Antes, cada upload criava um documento com id novo sem olhar o nome: enviar o
+    // mesmo .md duas vezes deixava dois documentos idênticos na base. Isso não era só
+    // sujeira de tela — o promptResolver injeta TODOS os chunks do cliente em cada
+    // descrição, então a diretriz da marca entrava duplicada em todo prompt. E, na
+    // exclusão, apagar um deixava o outro: o arquivo "voltava" no F5.
+    let substituidos = { docs: 0, chunks: 0, rules: 0 }
+    try {
+      const anteriores = await db
+        .collection('clients')
+        .doc(clientId)
+        .collection('knowledge_docs')
+        .where('filename', '==', filename)
+        .get()
+
+      if (!anteriores.empty) {
+        const refs = []
+        for (const antigo of anteriores.docs) {
+          const [chunksAntigos, regrasAntigas] = await Promise.all([
+            db.collection('clients').doc(clientId).collection('knowledge_chunks').where('docId', '==', antigo.id).get(),
+            db.collection('clients').doc(clientId).collection('knowledge_rules').where('sourceDocId', '==', antigo.id).get(),
+          ])
+
+          substituidos.chunks += chunksAntigos.size
+          substituidos.rules += regrasAntigas.size
+          substituidos.docs += 1
+
+          refs.push(...chunksAntigos.docs.map((d) => d.ref), ...regrasAntigas.docs.map((d) => d.ref), antigo.ref)
+        }
+
+        await bulkDelete(db, refs)
+
+        console.log(
+          `[Knowledge] "${filename}" já existia (${substituidos.docs} versão/versões) no cliente ${clientId} — removidas ${substituidos.chunks} chunk(s) e ${substituidos.rules} regra(s) antes de gravar a nova.`
+        )
+      }
+    } catch (err) {
+      console.warn('[Knowledge] Aviso ao substituir versão anterior do documento:', err.message)
     }
 
     // 1. Criar o documento na subcoleção do cliente
@@ -54,19 +96,25 @@ router.post('/:clientId', async (req, res, next) => {
       )
     )
 
-    const chunksBatch = db.batch()
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkRef = chunksCollection.doc()
-      chunksBatch.set(chunkRef, {
-        docId,
-        filename,
-        chunkIndex: i,
-        content: chunks[i],
-        embedding: embeddings[i],
-        createdAt: FieldValue.serverTimestamp(),
-      })
-    }
-    await chunksBatch.commit()
+    // BulkWriter, não batch: cada chunk carrega um embedding de 1536 floats, então o
+    // limite que estoura primeiro é o de TAMANHO da requisição (~10 MiB), não o de 500
+    // operações. Um .md grande fazia o commit único falhar com
+    // "Transaction too big" — e o documento ficava gravado sem os chunks.
+    await bulkSet(
+      db,
+      chunks.map((content, i) => ({
+        ref: chunksCollection.doc(),
+        data: {
+          docId,
+          filename,
+          chunkIndex: i,
+          content,
+          embedding: embeddings[i],
+          createdAt: FieldValue.serverTimestamp(),
+        },
+      })),
+      { merge: false }
+    )
     const chunkCount = chunks.length
 
     // 4. Extração Estruturada por IA das Regras do Documento
@@ -113,7 +161,11 @@ router.post('/:clientId', async (req, res, next) => {
       filename,
       chunkCount,
       ruleCount: extractedRuleCount,
-      message: `Documento "${filename}" indexado com sucesso! ${chunkCount} chunks e ${extractedRuleCount} regras extraídas.`,
+      replaced: substituidos,
+      message:
+        substituidos.docs > 0
+          ? `Documento "${filename}" atualizado! ${chunkCount} chunks e ${extractedRuleCount} regras. Substituiu ${substituidos.docs} versão(ões) anterior(es) (${substituidos.chunks} chunks e ${substituidos.rules} regras antigas removidas).`
+          : `Documento "${filename}" indexado com sucesso! ${chunkCount} chunks e ${extractedRuleCount} regras extraídas.`,
     })
   } catch (err) {
     next(err)
@@ -296,6 +348,62 @@ router.post('/:clientId/rules/:ruleId/reject', async (req, res, next) => {
 })
 
 /**
+ * GET /api/knowledge/:clientId/diagnostico
+ *
+ * O que existe DE FATO no Firestore para este cliente: ids reais dos documentos,
+ * contagem de chunks por docId e chunks órfãos (de documento já excluído).
+ *
+ * Serve para separar "não apagou" de "apagou e a tela mostra outro": se o mesmo
+ * arquivo foi enviado duas vezes, existem dois documentos com o mesmo `filename` e
+ * ids diferentes — apagar um deixa o outro na lista, e parece que voltou.
+ */
+router.get('/:clientId/diagnostico', async (req, res, next) => {
+  try {
+    const { clientId } = req.params
+
+    const docsSnapshot = await db.collection('clients').doc(clientId).collection('knowledge_docs').get()
+    const chunksSnapshot = await db.collection('clients').doc(clientId).collection('knowledge_chunks').select('docId').get()
+
+    const chunksPorDoc = {}
+    chunksSnapshot.docs.forEach((chunk) => {
+      const docId = chunk.data().docId ?? '(sem docId)'
+      chunksPorDoc[docId] = (chunksPorDoc[docId] ?? 0) + 1
+    })
+
+    const idsExistentes = new Set(docsSnapshot.docs.map((d) => d.id))
+    const documentos = docsSnapshot.docs.map((d) => ({
+      id: d.id,
+      filename: d.data().filename ?? null,
+      chunkCount: d.data().chunkCount ?? null,
+      chunksReaisNoBanco: chunksPorDoc[d.id] ?? 0,
+      createdAt: d.data().createdAt ?? null,
+    }))
+
+    const nomesDuplicados = Object.entries(
+      documentos.reduce((acc, doc) => {
+        if (doc.filename) acc[doc.filename] = (acc[doc.filename] ?? 0) + 1
+        return acc
+      }, {})
+    )
+      .filter(([, total]) => total > 1)
+      .map(([filename, total]) => ({ filename, total }))
+
+    return res.json({
+      clientId,
+      totalDocumentos: documentos.length,
+      documentos,
+      nomesDuplicados,
+      chunksOrfaos: Object.entries(chunksPorDoc)
+        .filter(([docId]) => !idsExistentes.has(docId))
+        .map(([docId, total]) => ({ docId, chunks: total })),
+    })
+  } catch (err) {
+    console.error('[Knowledge] Falha no diagnóstico:', err.message)
+    return res.status(502).json({ error: err.message })
+  }
+})
+
+/**
  * DELETE /api/knowledge/:clientId/:docId
  * Remove um documento .md, seus chunks e suas regras associadas usando lote (batch).
  */
@@ -304,14 +412,15 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
     const { clientId, docId } = req.params
     promptCache.invalidateClient(clientId)
 
+    console.log(`[Knowledge] DELETE recebido → cliente="${clientId}" doc="${docId}"`)
+
     if (isTestClient(clientId) || docId.startsWith('doc-teste')) {
+      console.log(`[Knowledge] doc="${docId}" tratado como MOCK (isTestClient=${isTestClient(clientId)}) — Firestore não foi tocado.`)
       deleteMockKnowledgeDoc(clientId, docId)
       return res.json({ ok: true, message: 'Documento de teste removido com sucesso.' })
     }
 
     try {
-      const deleteBatch = db.batch()
-
       // 1. Chunks associados
       const chunksSnapshot = await db
         .collection('clients')
@@ -319,8 +428,6 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
         .collection('knowledge_chunks')
         .where('docId', '==', docId)
         .get()
-
-      chunksSnapshot.docs.forEach((d) => deleteBatch.delete(d.ref))
 
       // 2. Regras associadas
       const rulesSnapshot = await db
@@ -330,23 +437,49 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
         .where('sourceDocId', '==', docId)
         .get()
 
-      rulesSnapshot.docs.forEach((d) => deleteBatch.delete(d.ref))
-
       // 3. Documento principal
-      const docRef = db
-        .collection('clients')
-        .doc(clientId)
-        .collection('knowledge_docs')
-        .doc(docId)
+      const docRef = db.collection('clients').doc(clientId).collection('knowledge_docs').doc(docId)
 
-      deleteBatch.delete(docRef)
+      const refs = [...chunksSnapshot.docs.map((d) => d.ref), ...rulesSnapshot.docs.map((d) => d.ref), docRef]
 
-      await deleteBatch.commit()
+      // BulkWriter em vez de batch: o commit é limitado por operações E por tamanho
+      // (~10 MiB). Lotear só pela contagem ainda dava
+      // "INVALID_ARGUMENT: Transaction too big" num documento com muitos chunks.
+      await bulkDelete(db, refs)
 
-      return res.json({ ok: true, message: 'Documento, chunks e regras removidos com sucesso.' })
+      // Confere se sumiu de verdade, em vez de confiar no commit. Foi exatamente a
+      // suposição não verificada que fez a tela mentir antes: "commit não lançou erro"
+      // não é a mesma coisa que "o documento não está mais lá".
+      const conferencia = await docRef.get()
+      if (conferencia.exists) {
+        console.error(
+          `[Knowledge] INCONSISTÊNCIA: commit sem erro, mas clients/${clientId}/knowledge_docs/${docId} ainda existe.`
+        )
+        return res.status(502).json({
+          error:
+            'O Firestore aceitou a exclusão mas o documento continua existindo. Verifique regras de segurança/permissões do service account.',
+          code: 'delete_not_effective',
+        })
+      }
+
+      console.log(
+        `[Knowledge] Documento ${docId} removido do cliente ${clientId}: ${chunksSnapshot.size} chunk(s), ${rulesSnapshot.size} regra(s), ${refs.length} operação(ões). Conferido: não existe mais.`
+      )
+
+      return res.json({
+        ok: true,
+        message: 'Documento, chunks e regras removidos com sucesso.',
+        deleted: { chunks: chunksSnapshot.size, rules: rulesSnapshot.size },
+      })
     } catch (err) {
-      deleteMockKnowledgeDoc(clientId, docId)
-      return res.json({ ok: true, message: 'Documento removido em contingência.' })
+      // NUNCA responder sucesso aqui. A exclusão é no Firestore, e o mock não
+      // substitui o Firestore: dizer "removido" quando o dado continua lá faz o
+      // documento reaparecer no F5 e destrói a confiança na tela.
+      console.error(`[Knowledge] FALHA ao excluir documento ${docId} do cliente ${clientId}:`, err.message)
+      return res.status(502).json({
+        error: `Não foi possível excluir o documento: ${err.message}`,
+        code: 'delete_failed',
+      })
     }
   } catch (err) {
     next(err)
@@ -354,4 +487,3 @@ router.delete('/:clientId/:docId', async (req, res, next) => {
 })
 
 export default router
-

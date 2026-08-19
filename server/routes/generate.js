@@ -4,25 +4,13 @@ import { resolvePrompt } from '../services/promptResolver.js'
 import { generateWithLLM } from '../services/llmService.js'
 import { sanitizeLLMOutput, applyDeterministicRules, validateOutput, enforceMaxLength } from '../services/outputValidator.js'
 import { isTestClient, getMockClient, saveMockGeneration, getMockGenerations } from '../services/mockStorage.js'
+import { toTitleCase } from '../utils/textCase.js'
 
 const router = Router()
 
-export function toTitleCase(str) {
-  if (!str) return ''
-  const lowerWords = new Set(['de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas', 'com', 'para', 'por', 'e', 'ou', 'a', 'o', 'as', 'os'])
-
-  return str
-    .trim()
-    .split(/\s+/)
-    .map((word, index) => {
-      const lower = word.toLowerCase()
-      if (index > 0 && lowerWords.has(lower)) {
-        return lower
-      }
-      return lower.charAt(0).toUpperCase() + lower.slice(1)
-    })
-    .join(' ')
-}
+// toTitleCase vive em utils/textCase.js — o normalizador de categorias aplica a mesma regra
+// em nome de categoria nova. Re-exportado aqui para não quebrar imports existentes.
+export { toTitleCase }
 
 /**
  * POST /api/generate

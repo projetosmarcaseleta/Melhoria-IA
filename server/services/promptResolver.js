@@ -8,6 +8,8 @@ import {
 } from './mockStorage.js'
 import { DEFAULT_SKILLS } from '../routes/skills.js'
 import { promptCache } from './promptCache.js'
+import { composePrompt } from './promptCore.js'
+import { firestoreMeter } from './firestoreMeter.js'
 
 /**
  * Resolve o prompt final para um cliente + tipo de geração no Firestore.
@@ -32,10 +34,14 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   // 1. Buscar prompt customizado do cliente
   let promptData = null
   let isCustomClientPrompt = false
+  // De onde saiu o texto-base. Exposto no retorno porque a tela de edição precisa
+  // mostrar ao operador QUAL prompt está valendo — havia divergência silenciosa entre
+  // o "padrão" exibido na interface e o que o gerador realmente usava.
+  let source = 'none'
 
   if (isMock) {
     promptData = getMockPrompt(clientId, promptType)
-    if (promptData) isCustomClientPrompt = true
+    if (promptData) { isCustomClientPrompt = true; source = 'client' }
   } else {
     try {
       const clientPromptDoc = await db
@@ -45,9 +51,11 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
         .doc(promptType)
         .get()
 
+      firestoreMeter.record('promptResolver:prompt', 'reads', 1)
       if (clientPromptDoc.exists && clientPromptDoc.data()?.isActive) {
         promptData = clientPromptDoc.data()
         isCustomClientPrompt = true
+        source = 'client'
       }
     } catch (err) {
       console.warn('[PromptResolver] Aviso ao buscar prompt do cliente:', err.message)
@@ -63,11 +71,21 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
 
         if (globalPromptDoc.exists) {
           promptData = globalPromptDoc.data()
+          source = 'global'
         }
       } catch (err) {
         console.warn('[PromptResolver] Aviso ao buscar prompt global:', err.message)
       }
     }
+  }
+
+  // 'categoria' é escopo ESTRITO: regra ou skill marcada como 'ambos' foi escrita
+  // pensando em texto de anúncio (bloco institucional, tom de voz, HTML) e poluiria
+  // o classificador de categoria, cuja saída é JSON consumido por código.
+  const strictScope = promptType === 'categoria'
+  const scopeMatches = (scopes) => {
+    if (strictScope) return Array.isArray(scopes) && scopes.includes('categoria')
+    return !scopes || scopes.includes(promptType) || scopes.includes('ambos')
   }
 
   // 2. Regras Estruturadas Aprovadas do Cliente (knowledge_rules)
@@ -77,7 +95,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   if (isMock) {
     const mockRules = getMockRules(clientId, true)
     mockRules.forEach((r) => {
-      const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+      const matchesScope = scopeMatches(r.scopes)
       if (matchesScope) {
         approvedRules.push(r)
       }
@@ -91,11 +109,12 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
         .where('status', '==', 'approved')
         .get()
 
+      firestoreMeter.record('promptResolver:rules', 'reads', Math.max(1, rulesSnapshot.size))
       if (!rulesSnapshot.empty) {
         rulesSnapshot.docs.forEach((doc) => {
           const r = { id: doc.id, ...doc.data() }
           // Filtrar por escopo (titulo, descricao ou ambos)
-          const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+          const matchesScope = scopeMatches(r.scopes)
           if (matchesScope) {
             approvedRules.push(r)
           }
@@ -105,7 +124,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
       console.warn('[PromptResolver] Aviso ao carregar regras estruturadas (usando fallback mock):', err.message)
       const mockRules = getMockRules(clientId, true)
       mockRules.forEach((r) => {
-        const matchesScope = !r.scopes || r.scopes.includes(promptType) || r.scopes.includes('ambos')
+        const matchesScope = scopeMatches(r.scopes)
         if (matchesScope) approvedRules.push(r)
       })
     }
@@ -133,6 +152,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
         .orderBy('chunkIndex')
         .get()
 
+      firestoreMeter.record('promptResolver:chunks', 'reads', Math.max(1, chunksSnapshot.size))
       if (!chunksSnapshot.empty) {
         const allChunks = chunksSnapshot.docs.map((doc) => ({
           id: doc.id,
@@ -156,8 +176,10 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   if (!isCustomClientPrompt) {
     if (hasKnowledge) {
       promptData = getKnowledgeAlignedPrompt(promptType)
+      source = 'knowledge_aligned'
     } else if (!promptData) {
       promptData = getHardcodedDefaultPrompt(promptType)
+      source = 'hardcoded'
     }
   }
 
@@ -182,6 +204,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
         fewShotSnapshot = await baseQuery.limit(5).get()
       }
 
+      firestoreMeter.record('promptResolver:fewShot', 'reads', Math.max(1, fewShotSnapshot.size))
       fewShotExamples = fewShotSnapshot.docs.map((doc) => doc.data())
     } catch (err) {
       console.warn('[PromptResolver] Aviso ao buscar few-shots:', err.message)
@@ -194,7 +217,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
   // Sem esse filtro, uma skill como 'html_spec_formatter' (que só faz sentido pra descrição)
   // vazava sua instrução de formatação HTML pro prompt do título também.
   const skillScopeById = Object.fromEntries(DEFAULT_SKILLS.map((s) => [s.id, s.scope || 'ambos']))
-  const matchesSkillScope = (scope) => !scope || scope === 'ambos' || scope === promptType
+  const matchesSkillScope = (scope) => (strictScope ? scope === 'categoria' : !scope || scope === 'ambos' || scope === promptType)
 
   const skillsApplied = []
   const activeSkillsConfig = {}
@@ -222,6 +245,7 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
         .where('isActive', '==', true)
         .get()
 
+      firestoreMeter.record('promptResolver:skills', 'reads', Math.max(1, skillsSnapshot.size))
       for (const doc of skillsSnapshot.docs) {
         const skill = doc.data()
         if (skill.promptInjection && matchesSkillScope(skillScopeById[doc.id])) {
@@ -256,49 +280,70 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     }
   }
 
-  // 6. Compilar prompt final — RAG + Regras Estruturadas
-  let fullPrompt = ''
-
-  if (structuredRulesText) {
-    fullPrompt += `${structuredRulesText}\n\n`
-  }
-
-  if (ragContextText) {
-    fullPrompt += `${ragContextText}\n\n`
-  }
-
-  fullPrompt += `INSTRUÇÕES DE GERAÇÃO E FORMATAÇÃO:\n${promptData.content}`
-
-  // Nota importante: Se houver blocos fixos determinísticos (prepend_exactly), instruir o LLM a focar no bloco técnico
+  // 6. Compilar prompt final
+  //
+  // COMPOSIÇÃO, não substituição (ver promptCore.js): o núcleo do sistema entra sempre,
+  // a personalização do cliente soma por cima, e o protocolo de resposta fecha o texto.
+  //
+  // `promptMode` do documento do cliente decide como tratar o texto salvo:
+  //   'append'  → é personalização; soma ao núcleo
+  //   'replace' → é o prompt inteiro (comportamento legado)
+  // Documento salvo ANTES desta mudança não tem o campo, e é tratado como 'replace' —
+  // é o que garante que nenhum cliente em produção mude de comportamento sem escolher.
   const hasPrependRules = approvedRules.some((r) => r.application === 'prepend_exactly')
-  if (hasPrependRules) {
-    fullPrompt += `\n\nATENÇÃO CRÍTICA: O texto institucional fixo inicial será inserido automaticamente pelo sistema no início exato da descrição. Gere APENAS o conteúdo técnico do produto solicitado (frase introdutória do produto + seções técnicas de especificações/recursos). NÃO repita o bloco institucional.`
+  const promptMode = isCustomClientPrompt ? promptData.promptMode ?? 'replace' : 'append'
+
+  let clientInstructions = null
+  let fullReplacement = null
+
+  if (promptType === 'categoria') {
+    // O classificador de categoria tem prompt próprio inteiro (getCategoryPrompt) e não
+    // participa da composição de título/descrição.
+    fullReplacement = promptData.content
+  } else if (source === 'client') {
+    if (promptMode === 'append') clientInstructions = promptData.content
+    else fullReplacement = promptData.content
+  } else if (source === 'global') {
+    fullReplacement = promptData.content
   }
+  // 'knowledge_aligned' e 'hardcoded' → só o NÚCLEO do sistema, sem texto extra:
+  // o núcleo já contém as diretrizes gerais, e o manual da marca entra como camada
+  // com aviso de precedência em vez de substituir o prompt inteiro.
 
-  // Injetar few-shot (com salvaguarda de estrutura)
-  if (fewShotExamples.length > 0) {
-    const examplesBlock = fewShotExamples
-      .map((ex, i) => {
-        const input = ex.inputTitle || ex.inputDescription || '(sem input)'
-        const output = ex.editedText || ex.generatedText
-        return `Exemplo ${i + 1}:\nInput: "${input}"\nResultado aprovado: "${output}"`
-      })
-      .join('\n---\n')
+  const fewShotText =
+    fewShotExamples.length > 0
+      ? (() => {
+          const examplesBlock = fewShotExamples
+            .map((ex, i) => {
+              const input = ex.inputTitle || ex.inputDescription || '(sem input)'
+              const output = ex.editedText || ex.generatedText
+              return `Exemplo ${i + 1}:\nInput: "${input}"\nResultado aprovado: "${output}"`
+            })
+            .join('\n---\n')
 
-    const fewShotNote = hasKnowledge
-      ? `\n\nEXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE (Use como referência de tom, mas obedeça rigorosamente a estrutura de seções da Base de Conhecimento acima):\n---\n${examplesBlock}\n---`
-      : `\n\nEXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE PARA ESTE CLIENTE:\n---\n${examplesBlock}\n---`
+          return hasKnowledge
+            ? `EXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE (referência de tom; a estrutura de seções da Base de Conhecimento prevalece):\n---\n${examplesBlock}\n---`
+            : `EXEMPLOS DE RESULTADOS APROVADOS ANTERIORMENTE PARA ESTE CLIENTE:\n---\n${examplesBlock}\n---`
+        })()
+      : ''
 
-    fullPrompt += fewShotNote
-  }
-
-  // Injetar skills
-  if (activeSkillsInstructions.length > 0) {
-    fullPrompt += `\n\n${activeSkillsInstructions.join('\n\n')}`
-  }
+  const fullPrompt = composePrompt({
+    type: promptType,
+    clientInstructions,
+    fullReplacement,
+    structuredRulesText,
+    ragContextText,
+    fewShotText,
+    skillsText: activeSkillsInstructions.join('\n\n'),
+    hasKnowledge,
+    hasPrependRules,
+  })
 
   const resolvedResult = {
     systemPrompt: fullPrompt,
+    source,
+    promptMode,
+    basePromptContent: promptData.content,
     version: promptData.version ?? 1,
     fewShotExamples,
     skillsApplied,
@@ -319,6 +364,8 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
  * o modelo siga a estrutura por categoria, seções em HTML e tom de voz da marca.
  */
 function getKnowledgeAlignedPrompt(type) {
+  if (type === 'categoria') return getCategoryPrompt()
+
   if (type === 'titulo') {
     return {
       version: 1,
@@ -352,8 +399,43 @@ PROTOCOLO DE RESPOSTA:
   }
 }
 
+/**
+ * Prompt do classificador de categorias.
+ *
+ * Não tem variante "alinhada à base de conhecimento": a âncora deste prompt é a
+ * ÁRVORE do cliente (decisão D3), injetada em tempo de execução pelo
+ * categoryTreeProfiler. Manual de marca fala de texto de anúncio, não de taxonomia.
+ */
+export function getCategoryPrompt() {
+  return {
+    version: 1,
+    content: `Você é um especialista em taxonomia de catálogo para marketplaces brasileiros.
+
+TAREFA
+A partir dos dados de um produto e da árvore de categorias atual do cliente (fornecida no contexto), indique o caminho hierárquico de categoria mais adequado para esse produto.
+
+DIRETRIZES
+1. ENCAIXE, NÃO INVENTE: use um departamento (nível 0) já existente na árvore do cliente. Criar departamento novo é último recurso.
+2. REUSO MÁXIMO: aproveite o caminho existente mais profundo que servir; proponha nome novo apenas para o nível realmente ausente.
+3. VOCABULÁRIO DO CLIENTE: use os termos que já aparecem na árvore, não sinônimos.
+4. UM CONCEITO POR NÍVEL: cada item de "path" é o nome de UM nó. Nunca use vírgula, barra, ">" ou "e" ligando dois conceitos distintos dentro de um nome.
+5. NOMES DE CATEGORIA: substantivo, preferencialmente plural. Proibido: marca, modelo, medida, voltagem, código/SKU, termo genérico ("Outros", "Diversos", "Geral").
+6. FIDELIDADE: classifique pelo que o produto É, não pelo que ele acompanha ou pelo público-alvo.
+
+PROTOCOLO DE RESPOSTA
+- Responda EXCLUSIVAMENTE no formato JSON definido pelo schema.
+- "path": do departamento à folha, ex: ["Automotivo", "Acessórios", "Tapetes"].
+- "matchType": "existing" (caminho inteiro já existe), "extend" (só os últimos níveis são novos) ou "new" (nem o departamento existe).
+- "existingCategoryId": id do nó existente mais profundo que você reconheceu no caminho, ou null.
+- "confidence": 0 a 1, honesto — abaixo de 0.6 significa que você não teve dados suficientes.
+- "reasoning": uma frase curta explicando a escolha.`,
+  }
+}
+
 /** Prompts globais de fallback para clientes sem base de conhecimento (.md) */
 function getHardcodedDefaultPrompt(type) {
+  if (type === 'categoria') return getCategoryPrompt()
+
   if (type === 'titulo') {
     return {
       version: 1,
