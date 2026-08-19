@@ -28,6 +28,11 @@ export default function App() {
   const setAuth = useStore((s) => s.setAuth)
   const clearAuth = useStore((s) => s.clearAuth)
 
+  // Rolar para o topo da página sempre que alternar de aba
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+  }, [activeTab])
+
   // Escutar estado de autenticação do Firebase
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {

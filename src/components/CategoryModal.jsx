@@ -26,6 +26,15 @@ export default function CategoryModal({ product, onClose, onApplied }) {
   const [confirmNewRoot, setConfirmNewRoot] = useState(false)
   const [result, setResult] = useState(null)
 
+  // Trava scroll do body enquanto o modal estiver aberto
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
 
