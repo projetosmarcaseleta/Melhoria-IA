@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import useStore from '../store/useStore'
 import { suggestCategory, approveCategory, attachCategory, rejectCategory, syncCategoryTree } from '../services/categoryService'
 
@@ -220,7 +221,7 @@ export default function CategoryModal({ product, onClose, onApplied }) {
     onClose()
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
       <div
         className="card w-full max-w-2xl max-h-[90vh] overflow-y-auto"
@@ -350,7 +351,8 @@ export default function CategoryModal({ product, onClose, onApplied }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

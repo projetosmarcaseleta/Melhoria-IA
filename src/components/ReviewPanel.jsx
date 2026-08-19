@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import useStore from '../store/useStore'
 import ProcessingBar from './ProcessingBar'
 import FloatingActionBar from './FloatingActionBar'
@@ -679,7 +680,7 @@ export default function ReviewPanel() {
       )}
 
       {/* Banner de Produtos Bloqueados */}
-      {showBlockedBanner && (
+      {showBlockedBanner && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-overlayFade">
           <div className="bg-slate-900 border border-rose-500/40 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl animate-slideUp space-y-4">
             <div className="px-5 py-4 flex items-center justify-between border-b border-slate-800 bg-rose-500/10">
@@ -757,7 +758,8 @@ export default function ReviewPanel() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Progress Indicator */}

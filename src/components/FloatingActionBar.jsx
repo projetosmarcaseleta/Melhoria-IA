@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import useStore from '../store/useStore'
 
 export default function FloatingActionBar({ onProcess, onApply, onCancel, disabled }) {
@@ -16,7 +17,7 @@ export default function FloatingActionBar({ onProcess, onApply, onCancel, disabl
   const processable = selectedProducts.filter((p) => p.status === 'idle').length
   const applyable = selectedProducts.filter((p) => p.status === 'processed').length
 
-  return (
+  return createPortal(
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-3 rounded-2xl bg-slate-900/95 border border-indigo-500/40 shadow-2xl shadow-indigo-500/20 backdrop-blur-xl animate-slideUp">
       
       {/* Contagem de Seleção */}
@@ -76,6 +77,7 @@ export default function FloatingActionBar({ onProcess, onApply, onCancel, disabl
       >
         ✕
       </button>
-    </div>
+    </div>,
+    document.body
   )
 }
