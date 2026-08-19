@@ -493,7 +493,7 @@ export default function ConfigModal() {
                         : `O que este cliente quer a MAIS em ${promptTab === 'descricao' ? 'Descrição' : 'Título'}:`}
                     </span>
                     <span className="text-slate-400 font-mono text-[10px]">
-                      Os dados do produto são enviados separadamente — não use {{title}}/{{description}}
+                      {'Os dados do produto são enviados separadamente — não use {{title}}/{{description}}'}
                     </span>
                   </div>
 
