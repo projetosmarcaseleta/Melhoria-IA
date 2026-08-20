@@ -4,6 +4,11 @@ import FileUpload from './FileUpload'
 import ProcessingBar from './ProcessingBar'
 import StatusDashboard from './StatusDashboard'
 import FloatingActionBar from './FloatingActionBar'
+import Icon from './icons/Icon'
+import { Button, IconButton, Panel, PanelHeader, Badge, TypeBadge, EmptyState } from './ui/primitives'
+import {
+  STATUS, typeBadgeOf, statusOf, canPatchProduct, blockReason,
+} from './ui/productTokens'
 import { parseIdsFromExcel } from '../services/excelService'
 import { fetchProductsFromWebhook } from '../services/webhookService'
 import { processProductsWithAI } from '../services/aiService'
@@ -12,35 +17,9 @@ import { playCompletionSound, showBrowserNotification } from '../utils/notificat
 
 const CONCURRENCY = 10
 
-const STATUS_LABEL = {
-  idle:       { text: 'Aguardando',     style: { background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.1)' } },
-  processing: { text: 'Processando...', style: { background: 'rgba(99,102,241,0.15)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)' } },
-  processed:  { text: 'Processado',     style: { background: 'rgba(245,158,11,0.15)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)' } },
-  applying:   { text: 'Aplicando...',   style: { background: 'rgba(99,102,241,0.15)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)' } },
-  applied:    { text: 'Aplicado',       style: { background: 'rgba(16,185,129,0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)' } },
-  undone:     { text: 'Desfeito',       style: { background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.1)' } },
-  error:      { text: 'Erro',           style: { background: 'rgba(244,63,94,0.15)', color: '#f87171', border: '1px solid rgba(244,63,94,0.3)' } },
-}
-
-// Badge visual para cada tipo de produto
-const TYPE_BADGE = {
-  SIMPLE:        { text: 'Simples',        color: '#22d3ee', bg: 'rgba(34,211,238,0.12)', border: 'rgba(34,211,238,0.3)' },
-  KIT:           { text: 'Kit',            color: '#fbbf24', bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.3)' },
-  VARIATION:     { text: 'Variação',       color: '#c084fc', bg: 'rgba(192,132,252,0.12)', border: 'rgba(192,132,252,0.3)' },
-  KIT_VARIATION: { text: 'Kit c/ Var.',    color: '#fb923c', bg: 'rgba(251,146,60,0.12)', border: 'rgba(251,146,60,0.3)' },
-}
-
-/**
- * Retorna true se o produto pode receber PATCH.
- * Regra: SIMPLE = sempre pode. KIT = só se priceCalculation === 'NONE'.
- * VARIATION e KIT_VARIATION seguem mesma regra do KIT.
- */
-export function canPatchProduct(product) {
-  const type = (product.productType ?? 'SIMPLE').toUpperCase()
-  if (type === 'SIMPLE') return true
-  const calc = (product.priceCalculation ?? '').toString().trim().toUpperCase()
-  return calc === 'NONE'
-}
+// Reexportado porque a regra vivia neste arquivo e outros módulos importavam
+// daqui; a implementação agora é única, em ui/productTokens.js.
+export { canPatchProduct }
 
 export default function ProductTable() {
   const products = useStore((s) => s.products)
@@ -56,7 +35,7 @@ export default function ProductTable() {
   const setProgress = useStore((s) => s.setProgress)
   const setTab = useStore((s) => s.setTab)
   const toggleSelectId = useStore((s) => s.toggleSelectId)
-  const selectAllIds = useStore((s) => s.selectAllIds)
+  const setSelectedIds = useStore((s) => s.setSelectedIds)
   const clearSelection = useStore((s) => s.clearSelection)
   const clearProducts = useStore((s) => s.clearProducts)
 
@@ -65,23 +44,20 @@ export default function ProductTable() {
   const [inputMode, setInputMode] = useState('manual')
   const [manualText, setManualText] = useState('')
   const [fileRef, setFileRef] = useState(null)
+  const [loaderOpen, setLoaderOpen] = useState(false)
   const cancelProcessRef = useState({ current: false })[0]
 
-  // ── Cancelar Processamento com IA ─────────────────────────────────────────
+  // ── Cancelar geração ────────────────────────────────────────────────────
   const handleCancelAI = () => {
     cancelProcessRef.current = true
     setProcessing(false)
-    // Reverter produtos que ainda estão em 'processing' para 'idle'
-    const currentProducts = useStore.getState().products
-    currentProducts.forEach((p) => {
-      if (p.status === 'processing') {
-        updateProductStatus(p.id, 'idle')
-      }
+    useStore.getState().products.forEach((p) => {
+      if (p.status === 'processing') updateProductStatus(p.id, 'idle')
     })
-    addToast('info', 'Processamento da IA interrompido pelo operador.')
+    addToast('info', 'Geração interrompida.')
   }
 
-  // ── Upload Excel ────────────────────────────────────────────────────────
+  // ── Upload de planilha ──────────────────────────────────────────────────
   const handleFileLoaded = async (file, err) => {
     if (err) { addToast('error', err); return }
     try {
@@ -93,12 +69,11 @@ export default function ProductTable() {
     }
   }
 
-  // ── Consulta direta ao banco de dados (n8n webhook) ─────────────────────
+  // ── Buscar produtos ─────────────────────────────────────────────────────
   const handleFetchWebhook = async () => {
     let ids = fileRef ?? []
     if (inputMode === 'manual') {
-      ids = manualText.split(/[\n,;|\s]+/).map((s) => s.trim()).filter(Boolean)
-      ids = [...new Set(ids)]
+      ids = [...new Set(manualText.split(/[\n,;|\s]+/).map((s) => s.trim()).filter(Boolean))]
     }
 
     if (!ids.length) { addToast('warning', 'Informe pelo menos um ID de produto.'); return }
@@ -108,7 +83,8 @@ export default function ProductTable() {
       const fetched = await fetchProductsFromWebhook(ids)
       setProducts(fetched)
       clearSelection()
-      addToast('success', `${fetched.length} produtos carregados do banco de dados.`)
+      setLoaderOpen(false)
+      addToast('success', `${fetched.length} produto(s) carregado(s).`)
     } catch (e) {
       addToast('error', 'Não consegui buscar esses produtos: ' + e.message)
     } finally {
@@ -116,14 +92,14 @@ export default function ProductTable() {
     }
   }
 
-  // ── Processar com IA ────────────────────────────────────────────────────
+  // ── Gerar com IA ────────────────────────────────────────────────────────
   const handleProcessAI = async () => {
     const fields = []
     if (config.applyTitles) fields.push('title')
     if (config.applyDescriptions) fields.push('description')
 
     if (fields.length === 0) {
-      addToast('warning', 'Selecione pelo menos um campo (Título ou Descrição) para processar.')
+      addToast('warning', 'Escolha ao menos um campo (título ou descrição) para gerar.')
       return
     }
 
@@ -131,7 +107,7 @@ export default function ProductTable() {
       (ui.selectedIds.length ? ui.selectedIds.includes(p.id) : true) && p.status === 'idle'
     )
     if (!targets.length) { addToast('info', 'Nenhum produto pronto para gerar no momento.'); return }
-    
+
     cancelProcessRef.current = false
     targets.forEach((p) => updateProductStatus(p.id, 'processing'))
     setProcessing(true)
@@ -144,16 +120,10 @@ export default function ProductTable() {
       targets,
       CONCURRENCY,
       async (p) => {
-        if (cancelProcessRef.current) {
-          updateProductStatus(p.id, 'idle')
-          return
-        }
+        if (cancelProcessRef.current) { updateProductStatus(p.id, 'idle'); return }
         try {
           const results = await processProductsWithAI([p], fields)
-          if (cancelProcessRef.current) {
-            updateProductStatus(p.id, 'idle')
-            return
-          }
+          if (cancelProcessRef.current) { updateProductStatus(p.id, 'idle'); return }
           const r = results[0]
           if (r.error) {
             updateProductStatus(r.id, 'error')
@@ -184,331 +154,322 @@ export default function ProductTable() {
           }
         }
       },
-      (done, total) => {
-        if (!cancelProcessRef.current) {
-          setProgress(done, total)
-        }
-      },
+      (done, total) => { if (!cancelProcessRef.current) setProgress(done, total) },
       () => cancelProcessRef.current
     )
 
-    if (cancelProcessRef.current) {
-      setProcessing(false)
-      return
-    }
+    if (cancelProcessRef.current) { setProcessing(false); return }
 
     setProcessing(false)
 
-    if (needAttention > 0) {
-      addToast(
-        'warning',
-        `Pronto! ${targets.length} anúncio(s) criado(s) — ${needAttention} precisa(m) da sua atenção.`
-      )
-    } else {
-      addToast('success', `Pronto! ${targets.length} anúncio(s) criado(s).`)
-    }
+    addToast(
+      needAttention > 0 ? 'warning' : 'success',
+      needAttention > 0
+        ? `Pronto! ${targets.length} anúncio(s) gerado(s) — ${needAttention} precisa(m) da sua atenção.`
+        : `Pronto! ${targets.length} anúncio(s) gerado(s).`
+    )
 
     if (config.soundNotification) {
       playCompletionSound()
       showBrowserNotification(
-        'Pronto! Seus anúncios estão criados.',
+        'Pronto! Seus anúncios estão gerados.',
         needAttention > 0
-          ? `${targets.length} anúncio(s) criado(s). Encontrei ${needAttention} que precisa(m) de revisão.`
+          ? `${targets.length} anúncio(s) gerado(s). ${needAttention} precisa(m) de revisão.`
           : `${targets.length} anúncio(s) prontos para revisão.`
       )
     }
     setTab('review')
   }
 
-  // ── Renderização ────────────────────────────────────────────────────────
+  // ── Derivados ───────────────────────────────────────────────────────────
   const filtered = products.filter((p) => {
     const matchStatus = filterStatus === 'all' || p.status === filterStatus
-    const matchSearch = !search || p.id.toLowerCase().includes(search.toLowerCase()) || p.title.toLowerCase().includes(search.toLowerCase())
+    const q = search.toLowerCase()
+    const matchSearch = !search || p.id.toLowerCase().includes(q) || (p.title ?? '').toLowerCase().includes(q)
     return matchStatus && matchSearch
   })
 
   const allSelected = filtered.length > 0 && filtered.every((p) => ui.selectedIds.includes(p.id))
-  const toggleAll = () => { if (allSelected) clearSelection(); else selectAllIds() }
+  const toggleAll = () => (allSelected ? clearSelection() : setSelectedIds(filtered.map((p) => p.id)))
   const isLoading = ui.isProcessing || ui.isFetchingWebhook || ui.isApplying
+  const showLoader = loaderOpen || products.length === 0
+  const pendingCount = products.filter((p) => p.status === 'idle').length
+  const readyCount = products.filter((p) => p.status === 'processed').length
+  const idsInformados = inputMode === 'manual'
+    ? new Set(manualText.split(/[\n,;|\s]+/).map((s) => s.trim()).filter(Boolean)).size
+    : (fileRef?.length ?? 0)
 
   return (
-    <div className="space-y-5">
-      {/* Dashboard de Estatísticas */}
-      <StatusDashboard />
+    <div className="space-y-4">
+      {products.length > 0 && <StatusDashboard />}
 
-      {/* Entrada de IDs */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
-        <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-800 bg-slate-950/60">
-          <span className="text-xs font-bold text-white uppercase tracking-wider mr-3">
-            1. Informe os IDs dos Produtos
-          </span>
-          {[
-            { key: 'manual', icon: '✏️', label: 'Inserir manualmente' },
-            { key: 'file', icon: '📂', label: 'Planilha Excel' },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setInputMode(tab.key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                inputMode === tab.key
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-            >
-              <span className="mr-1">{tab.icon}</span>
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="p-5 space-y-4">
-          {inputMode === 'file' && <FileUpload onIdsLoaded={handleFileLoaded} disabled={isLoading} />}
-          {inputMode === 'manual' && (
-            <textarea
-              value={manualText}
-              onChange={(e) => setManualText(e.target.value)}
-              disabled={isLoading}
-              placeholder={'Cole ou digite os IDs aqui, um por linha:\n18057008\n18060671\n18060816\n\nTambém aceita separação por vírgula, ponto-e-vírgula ou espaço.'}
-              rows={4}
-              className="w-full p-3.5 bg-slate-950 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-y"
-            />
-          )}
-          <button
-            onClick={handleFetchWebhook}
-            disabled={isLoading || (inputMode === 'manual' && !manualText.trim()) || (inputMode === 'file' && !fileRef?.length)}
-            className="w-full py-3 px-4 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      {/* ── Carregar produtos ─────────────────────────────────────────────
+          A numeração "1./2./3./4." foi removida: os quatro passos viviam em
+          três lugares com pesos visuais diferentes (o passo 3, a ação mais
+          importante, era menor que o passo 2), prometendo uma linearidade que
+          o layout não entregava. Agora este cartão recolhe depois da busca e
+          devolve o topo da tela para o trabalho de verdade. */}
+      {showLoader ? (
+        <Panel>
+          <PanelHeader
+            icon="database"
+            title="Carregar produtos"
+            hint="Informe os IDs da AnyMarket que você quer trabalhar"
           >
-            {ui.isFetchingWebhook ? (
-              <>
-                <span className="login-spinner" />
-                <span>Consultando banco de dados no n8n...</span>
-              </>
-            ) : (
-              <span>🔗 2. Consultar banco de dados</span>
+            <div className="flex items-center gap-1 bg-slate-900 p-1 border border-slate-800 rounded-xl">
+              {[
+                { key: 'manual', icon: 'pencil', label: 'Digitar IDs' },
+                { key: 'file', icon: 'upload', label: 'Planilha' },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setInputMode(tab.key)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold transition-all ${
+                    inputMode === tab.key
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
+                  }`}
+                >
+                  <Icon name={tab.icon} size={13} />
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            {products.length > 0 && (
+              <IconButton icon="x" label="Fechar" variant="ghost" onClick={() => setLoaderOpen(false)} />
             )}
-          </button>
-        </div>
-      </div>
+          </PanelHeader>
 
-      {/* Barra de Progresso com Botão de Cancelar */}
+          <div className="p-4 space-y-3">
+            {inputMode === 'file' && <FileUpload onIdsLoaded={handleFileLoaded} disabled={isLoading} />}
+            {inputMode === 'manual' && (
+              <textarea
+                value={manualText}
+                onChange={(e) => setManualText(e.target.value)}
+                disabled={isLoading}
+                placeholder={'Um ID por linha:\n18057008\n18060671\n\nTambém aceita vírgula, ponto-e-vírgula ou espaço.'}
+                rows={4}
+                className="w-full p-3 bg-slate-950 border border-slate-700/80 rounded-xl text-[13px] text-white placeholder-slate-500 font-mono focus:outline-none focus:border-indigo-500 transition-all resize-y"
+              />
+            )}
+
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="t-meta">
+                {idsInformados > 0 ? `${idsInformados} ID(s) informado(s)` : 'Nenhum ID informado ainda'}
+              </p>
+              <Button
+                variant="primary"
+                size="lg"
+                icon={ui.isFetchingWebhook ? undefined : 'search'}
+                onClick={handleFetchWebhook}
+                disabled={isLoading || idsInformados === 0}
+              >
+                {ui.isFetchingWebhook ? (
+                  <span className="flex items-center gap-2"><span className="login-spinner" />Buscando produtos...</span>
+                ) : 'Buscar produtos'}
+              </Button>
+            </div>
+          </div>
+        </Panel>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setLoaderOpen(true)}
+          className="w-full flex items-center gap-2.5 px-4 py-2.5 bg-slate-900/60 border border-slate-800 border-dashed rounded-xl text-left hover:border-indigo-500/40 hover:bg-slate-900 transition-all group"
+        >
+          <Icon name="plus" size={15} className="text-indigo-400" />
+          <span className="t-body group-hover:text-white transition-colors">Carregar outros IDs</span>
+          <Icon name="chevronDown" size={14} className="ml-auto text-slate-500" />
+        </button>
+      )}
+
+      {/* ── Progresso ─────────────────────────────────────────────────── */}
       {isLoading && (ui.progress?.total ?? 0) > 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <Panel className="p-4 flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex-1">
             <ProcessingBar
               current={ui.progress?.current ?? 0}
               total={ui.progress?.total ?? 0}
-              label={ui.isProcessing ? 'Processando com IA...' : ui.isApplying ? 'Aplicando no AnyMarket...' : 'Carregando...'}
+              label={ui.isProcessing ? 'Gerando com IA...' : ui.isApplying ? 'Publicando na AnyMarket...' : 'Carregando...'}
             />
           </div>
           {ui.isProcessing && (
-            <button
-              type="button"
-              onClick={handleCancelAI}
-              className="px-4 py-2.5 rounded-xl text-xs font-extrabold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 hover:border-rose-500 shadow-md transition-all flex items-center justify-center gap-2 shrink-0 animate-pulse"
-              title="Interromper geração de anúncios imediatamente"
-            >
-              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-              <span>⏹️ Cancelar Processamento</span>
-            </button>
+            <Button variant="danger" icon="stop" onClick={handleCancelAI}>Interromper</Button>
           )}
-        </div>
+        </Panel>
       )}
 
-      {/* Tabela de Produtos */}
+      {/* ── Lista de produtos ─────────────────────────────────────────── */}
       {products.length > 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl space-y-0">
-          
-          {/* Action Bar Superior */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-950/70 border-b border-slate-800">
-            {/* Filtros de Busca e Status */}
-            <div className="flex items-center gap-2.5 flex-1 min-w-[280px]">
+        <Panel>
+          {/* Filtros: o que você está vendo */}
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 bg-slate-950/40 border-b border-slate-800">
+            <div className="relative flex-1 min-w-[180px]">
+              <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 type="text"
-                placeholder="Buscar por ID ou título..."
+                placeholder="Buscar por ID ou título"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="px-3.5 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 flex-1 min-w-[160px]"
+                className="w-full pl-9 pr-3 py-1.5 bg-slate-900 border border-slate-700/80 rounded-lg text-[13px] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
               />
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="px-3.5 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 shrink-0"
-              >
-                <option value="all">Todos os status</option>
-                {Object.entries(STATUS_LABEL).map(([k, v]) => (
-                  <option key={k} value={k}>{v.text}</option>
+            </div>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-3 py-1.5 bg-slate-900 border border-slate-700/80 rounded-lg text-[13px] text-slate-200 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="all">Todos os status</option>
+              {Object.entries(STATUS).map(([k, v]) => (
+                <option key={k} value={k}>{v.text}</option>
+              ))}
+            </select>
+            <span className="t-meta ml-auto">
+              {filtered.length === products.length
+                ? `${products.length} produto(s)`
+                : `${filtered.length} de ${products.length}`}
+            </span>
+          </div>
+
+          {/* Ações: o que vai acontecer. Os campos a gerar saíram da fileira de
+              filtros — eram uma configuração da ação disfarçada de filtro. */}
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <span className="t-label">Gerar</span>
+              <div className="flex items-center gap-1 p-1 bg-slate-950/70 border border-slate-800 rounded-xl">
+                {[
+                  { key: 'applyTitles', label: 'Título', icon: 'tag', on: config.applyTitles, accent: 'indigo' },
+                  { key: 'applyDescriptions', label: 'Descrição', icon: 'fileText', on: config.applyDescriptions, accent: 'emerald' },
+                ].map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => setConfig({ [f.key]: !f.on })}
+                    aria-pressed={f.on}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-semibold border transition-all ${
+                      f.on
+                        ? f.accent === 'indigo'
+                          ? 'bg-indigo-600/20 border-indigo-500/70 text-indigo-200'
+                          : 'bg-emerald-600/20 border-emerald-500/70 text-emerald-200'
+                        : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    <Icon name={f.on ? 'check' : f.icon} size={12} />
+                    {f.label}
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
 
-            {/* Controles de Processamento & Botões de Ação */}
-            <div className="flex items-center gap-3 flex-wrap">
-              {/* Seleção de Campos (Títulos / Descrições) */}
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mr-1">
-                  Campos IA:
-                </span>
-                
-                {/* Toggle Título */}
-                <button
-                  type="button"
-                  onClick={() => setConfig({ applyTitles: !config.applyTitles })}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border ${
-                    config.applyTitles
-                      ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200'
-                      : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
-                  }`}
-                >
-                  <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] ${
-                    config.applyTitles ? 'bg-indigo-500 text-white' : 'border border-slate-700'
-                  }`}>
-                    {config.applyTitles ? '✓' : ''}
-                  </span>
-                  <span>Título</span>
-                </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Antes era um botão "4. Revisar" com o mesmo peso do primário,
+                  duplicando a aba "Revisão" do menu. Virou caminho discreto e
+                  só aparece quando existe algo pronto para revisar. */}
+              {readyCount > 0 && (
+                <Button variant="ghost" icon="review" iconRight="arrowRight" onClick={() => setTab('review')}>
+                  Revisar {readyCount} pronto(s)
+                </Button>
+              )}
 
-                {/* Toggle Descrição */}
-                <button
-                  type="button"
-                  onClick={() => setConfig({ applyDescriptions: !config.applyDescriptions })}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border ${
-                    config.applyDescriptions
-                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200'
-                      : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
-                  }`}
+              {ui.isProcessing ? (
+                <Button variant="danger" icon="stop" onClick={handleCancelAI}>Interromper geração</Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="lg"
+                  icon="sparkles"
+                  onClick={handleProcessAI}
+                  disabled={isLoading || pendingCount === 0}
+                  count={ui.selectedIds.length || undefined}
+                  title={ui.selectedIds.length ? 'Gera para os produtos selecionados' : 'Gera para todos os produtos aguardando'}
                 >
-                  <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] ${
-                    config.applyDescriptions ? 'bg-emerald-500 text-white' : 'border border-slate-700'
-                  }`}>
-                    {config.applyDescriptions ? '✓' : ''}
-                  </span>
-                  <span>Descrição</span>
-                </button>
-              </div>
+                  Gerar com IA
+                </Button>
+              )}
 
-              {/* Botões de Ação */}
-              <div className="flex items-center gap-2">
-                {ui.isProcessing ? (
-                  <button
-                    type="button"
-                    onClick={handleCancelAI}
-                    className="px-4 py-2 rounded-xl text-xs font-extrabold bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 transition-all flex items-center gap-1.5 animate-pulse"
-                  >
-                    <span>⏹️ Cancelar Processamento</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleProcessAI}
-                    disabled={isLoading}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5"
-                  >
-                    <span>🤖 3. Processar com IA</span>
-                  </button>
-                )}
-                <button
-                  onClick={() => setTab('review')}
-                  disabled={isLoading}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5"
-                >
-                  <span>👁️ 4. Revisar</span>
-                </button>
-                <button
-                  onClick={clearProducts}
-                  disabled={isLoading}
-                  className="w-9 h-9 rounded-xl flex items-center justify-center bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 transition-all"
-                  title="Limpar lista de produtos"
-                >
-                  🗑️
-                </button>
-              </div>
+              <IconButton
+                icon="trash"
+                label="Limpar a lista de produtos"
+                variant="danger"
+                size={34}
+                disabled={isLoading}
+                onClick={clearProducts}
+              />
             </div>
           </div>
 
-          {/* Tabela de Produtos com Estilização Refinada de Checkboxes */}
+          {/* Tabela */}
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left">
               <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/90 text-slate-300 font-extrabold uppercase tracking-wider text-[11px]">
-                  <th className="py-3.5 pl-4 pr-2 w-10 text-center">
+                <tr className="border-b border-slate-800 bg-slate-950/70">
+                  <th className="py-2.5 pl-4 pr-2 w-10">
                     <input
                       type="checkbox"
                       checked={allSelected}
                       onChange={toggleAll}
-                      className="w-4 h-4 rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-slate-900 cursor-pointer accent-indigo-600 align-middle"
+                      aria-label="Selecionar todos os produtos visíveis"
+                      className="w-4 h-4 rounded border-slate-700 bg-slate-950 accent-indigo-600 cursor-pointer align-middle"
                     />
                   </th>
-                  <th className="py-3.5 px-3">ID</th>
-                  <th className="py-3.5 px-3">Título Atual</th>
-                  <th className="py-3.5 px-3">Tipo</th>
-                  <th className="py-3.5 px-3">Título Novo (IA)</th>
-                  <th className="py-3.5 px-3">Status</th>
+                  <th className="py-2.5 px-3 t-label">ID</th>
+                  <th className="py-2.5 px-3 t-label">Título atual</th>
+                  <th className="py-2.5 px-3 t-label">Título gerado</th>
+                  <th className="py-2.5 px-3 t-label">Tipo</th>
+                  <th className="py-2.5 px-3 t-label">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
+              <tbody className="divide-y divide-slate-800/50">
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                      Nenhum produto encontrado com os filtros selecionados.
+                    <td colSpan={6} className="px-4 py-10 text-center t-body">
+                      Nenhum produto corresponde aos filtros.
                     </td>
                   </tr>
                 ) : (
                   filtered.map((p) => {
-                    const sl = STATUS_LABEL[p.status] ?? STATUS_LABEL.idle
-                    const typeBadge = TYPE_BADGE[(p.productType ?? 'SIMPLE').toUpperCase()] ?? TYPE_BADGE.SIMPLE
-                    const patchAllowed = canPatchProduct(p)
+                    const st = statusOf(p)
+                    const motivo = blockReason(p)
                     const isRowSelected = ui.selectedIds.includes(p.id)
 
                     return (
                       <tr
                         key={p.id + '-' + p.idSku}
-                        className={`transition-colors ${
-                          isRowSelected ? 'bg-indigo-500/10' : 'hover:bg-slate-950/40'
-                        }`}
+                        className={`transition-colors ${isRowSelected ? 'bg-indigo-500/[0.08]' : 'hover:bg-slate-950/40'}`}
                       >
-                        <td className="py-3.5 pl-4 pr-2 text-center">
+                        <td className="py-2.5 pl-4 pr-2">
                           <input
                             type="checkbox"
                             checked={isRowSelected}
                             onChange={() => toggleSelectId(p.id)}
-                            className="w-4 h-4 rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-slate-900 cursor-pointer accent-indigo-600 align-middle"
+                            aria-label={`Selecionar produto ${p.id}`}
+                            className="w-4 h-4 rounded border-slate-700 bg-slate-950 accent-indigo-600 cursor-pointer align-middle"
                           />
                         </td>
-                        <td className="py-3.5 px-3 font-mono font-semibold text-slate-300 text-[11px] whitespace-nowrap">
-                          {p.id}
-                        </td>
-                        <td className="py-3.5 px-3 font-medium text-white max-w-xs truncate" title={p.title}>
-                          {p.title || <span className="text-slate-500 italic">—</span>}
-                        </td>
-                        <td className="py-3.5 px-3 whitespace-nowrap">
-                          <span
-                            className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase border"
-                            style={{ background: typeBadge.bg, color: typeBadge.color, borderColor: typeBadge.border }}
-                          >
-                            {typeBadge.text}
+                        <td className="py-2.5 px-3 t-mono text-slate-400 whitespace-nowrap">{p.id}</td>
+                        <td className="py-2.5 px-3 max-w-[280px]">
+                          <span className="block truncate text-[13px] text-slate-200" title={p.title}>
+                            {p.title || <span className="t-meta italic">—</span>}
                           </span>
-                          {!patchAllowed && (
-                            <span
-                              title={`PATCH bloqueado: ${p.productType} com cálculo ${p.priceCalculation}`}
-                              className="ml-1.5 text-xs cursor-help"
-                            >
-                              🔒
-                            </span>
-                          )}
                         </td>
-                        <td className="py-3.5 px-3 max-w-xs truncate" title={p.newTitle}>
+                        <td className="py-2.5 px-3 max-w-[280px]">
                           {p.newTitle ? (
-                            <span className="font-bold text-emerald-400">{p.newTitle}</span>
+                            <span className="block truncate text-[13px] font-medium text-emerald-300" title={p.newTitle}>
+                              {p.newTitle}
+                            </span>
                           ) : (
-                            <span className="text-slate-500 italic">—</span>
+                            <span className="t-meta italic">—</span>
                           )}
                         </td>
-                        <td className="py-3.5 px-3 whitespace-nowrap">
-                          <span
-                            className="px-2.5 py-0.5 rounded text-[10px] font-extrabold uppercase"
-                            style={sl.style}
-                          >
-                            {sl.text}
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5">
+                            <TypeBadge badge={typeBadgeOf(p)} />
+                            {motivo && <Badge tone="danger" icon="lock" title={motivo}>Bloqueado</Badge>}
                           </span>
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <Badge tone={st.tone} icon={st.icon}>{st.text}</Badge>
                         </td>
                       </tr>
                     )
@@ -518,19 +479,23 @@ export default function ProductTable() {
             </table>
           </div>
 
-          {/* Footer da Tabela */}
-          <div className="px-5 py-3 bg-slate-950/80 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
-            <span>Exibindo {filtered.length} de {products.length} produto(s)</span>
-            {ui.selectedIds.length > 0 && (
-              <span className="font-bold text-indigo-400">
-                {ui.selectedIds.length} produto(s) selecionado(s)
+          {ui.selectedIds.length > 0 && (
+            <div className="px-4 py-2 bg-slate-950/60 border-t border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+              <span className="text-[13px] font-medium text-indigo-300">
+                {ui.selectedIds.length} selecionado(s) — a geração vai agir só neles
               </span>
-            )}
-          </div>
-        </div>
+              <Button size="sm" variant="ghost" icon="x" onClick={clearSelection}>Limpar seleção</Button>
+            </div>
+          )}
+        </Panel>
       )}
 
-      {/* Floating Action Bar */}
+      {products.length === 0 && !ui.isFetchingWebhook && (
+        <EmptyState icon="box" title="Nenhum produto carregado">
+          Informe os IDs da AnyMarket acima e busque os produtos para começar.
+        </EmptyState>
+      )}
+
       <FloatingActionBar onProcess={handleProcessAI} onCancel={handleCancelAI} disabled={isLoading} />
     </div>
   )

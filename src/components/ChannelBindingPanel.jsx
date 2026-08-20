@@ -727,8 +727,12 @@ function CampoAtributo({ attr, valor, editavel, onChange }) {
  *   - resolvida com ressalva (confiança baixa, ou o nome não é o mesmo) → vem DESMARCADA,
  *     com o rastro visível: é exatamente onde a conferência humana vale;
  *   - não resolvida → não é oferecida como vínculo; sobra o ajuste manual.
+ *
+ * Exportado porque `PipelineChannelsStage.jsx` (etapa "Canais" do wizard em lote,
+ * docs/PLANO_WIZARD_PIPELINE.md) reaproveita este mesmo resolver uma vez por categoria
+ * distinta do lote, em vez de duplicar a lógica de proposta/confirmação.
  */
-function AutoBindStep({ clientId, anymarketCategoryId, canais, onDone, onAjustar }) {
+export function AutoBindStep({ clientId, anymarketCategoryId, canais, onDone, onAjustar }) {
   const addToast = useStore((s) => s.addToast)
 
   const [proposta, setProposta] = useState(null)

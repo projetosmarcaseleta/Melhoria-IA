@@ -173,6 +173,14 @@ const useStore = create(
           ui: { ...s.ui, selectedIds: s.products.map((p) => p.id) },
         })),
 
+      // Define a seleção explicitamente. A aba de Revisão trabalha sobre um
+      // subconjunto (só os produtos revisáveis), então não pode usar
+      // `selectAllIds` — e antes ela mantinha um `useState` local, o que fazia
+      // a barra flutuante (que lê `ui.selectedIds`) mostrar a seleção da OUTRA
+      // aba enquanto os botões agiam sobre esta.
+      setSelectedIds: (ids) =>
+        set((s) => ({ ui: { ...s.ui, selectedIds: [...new Set(ids)] } })),
+
       clearSelection: () =>
         set((s) => ({ ui: { ...s.ui, selectedIds: [] } })),
 
