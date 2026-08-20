@@ -178,7 +178,7 @@ export function exportLogsToXlsx(logs) {
 export function exportBlockedProductsToXlsx(products) {
   const rows = products.map((p) => ({
     ID: p.id,
-    SKU: p.sku || p.idSku || p.partnerId || '',
+    SKU: p.sku ?? p.SKU ?? '',
     TIPO: p.productType ?? 'SIMPLE',
     CALCULO_PRECO: p.priceCalculation ?? '',
     TITULO_ANTERIOR: p.title ?? '',
@@ -208,7 +208,7 @@ export function exportBlockedProductsToXlsx(products) {
 export function exportReviewToXlsx(products) {
   const rows = products.map((p) => ({
     ID: p.id,
-    SKU: p.sku || p.idSku || p.partnerId || '',
+    SKU: p.sku ?? p.SKU ?? '',
     TITULO_ANTERIOR: p.title ?? '',
     TITULO_NOVO: p.newTitle ?? p.title ?? '',
     DESCRICAO_ANTERIOR: convertToHtml(p.description ?? ''),
