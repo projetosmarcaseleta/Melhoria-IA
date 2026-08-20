@@ -216,7 +216,7 @@ router.get('/:clientId', async (req, res, next) => {
     const { clientId } = req.params
 
     const result = {
-      defaultPrompts: DEFAULT_PROMPTS,
+      defaultPrompts: { ...DEFAULT_PROMPTS },
     }
 
     for (const type of ['titulo', 'descricao']) {
@@ -230,7 +230,23 @@ router.get('/:clientId', async (req, res, next) => {
         }
       } else {
         try {
-          // Buscar no cliente
+          // 1. Ler o núcleo global do Firestore para compor defaultPrompts
+          let globalContent = DEFAULT_PROMPTS[type]
+          let globalVersion = 1
+
+          try {
+            const globalDoc = await db.collection('global_prompts').doc(type).get()
+            if (globalDoc.exists && globalDoc.data()?.content) {
+              globalContent = globalDoc.data().content
+              globalVersion = globalDoc.data().version ?? 1
+            }
+          } catch (gErr) {
+            console.warn(`[Prompts] Falha ao ler global_prompts/${type}:`, gErr.message)
+          }
+
+          result.defaultPrompts[type] = globalContent
+
+          // 2. Buscar no cliente
           const clientDoc = await db
             .collection('clients')
             .doc(clientId)
@@ -249,15 +265,10 @@ router.get('/:clientId', async (req, res, next) => {
             }
           } else {
             // Fallback global
-            const globalDoc = await db
-              .collection('global_prompts')
-              .doc(type)
-              .get()
-
             result[type] = {
-              id: globalDoc.exists ? globalDoc.id : type,
-              content: globalDoc.exists ? globalDoc.data().content : DEFAULT_PROMPTS[type],
-              version: globalDoc.exists ? (globalDoc.data().version ?? 1) : 1,
+              id: type,
+              content: globalContent,
+              version: globalVersion,
               isGlobal: true,
             }
           }
@@ -495,6 +506,15 @@ router.post('/:clientId/restore', async (req, res, next) => {
       if (!historico.exists) return res.status(404).json({ error: 'Versão não encontrada no histórico.' })
       conteudo = historico.data().content
       origem = `versão ${historico.data().version}`
+    } else if (useDefault) {
+      try {
+        const globalDoc = await db.collection('global_prompts').doc(type).get()
+        if (globalDoc.exists && globalDoc.data()?.content) {
+          conteudo = globalDoc.data().content
+        }
+      } catch (gErr) {
+        console.warn(`[Prompts] Falha ao ler global_prompts/${type} no restore:`, gErr.message)
+      }
     }
 
     const ref = clientRef.collection('prompts').doc(type)
