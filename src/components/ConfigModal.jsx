@@ -211,21 +211,29 @@ export default function ConfigModal() {
         gumgaToken: form.anymarketToken,
       })
 
-      // 2. Atualizar token do cliente ativo se mudou
-      if (activeClient?.id && form.anymarketToken !== activeClient.anymarket_token) {
-        if (canEditPrompt) {
+      // 2. Atualizar tokens do cliente ativo se mudaram
+      if (activeClient?.id) {
+        const clientUpdates = {}
+        if (form.anymarketToken !== activeClient.anymarket_token) {
+          clientUpdates.anymarket_token = form.anymarketToken
+        }
+        if (form.anymarketPanelToken !== activeClient.anymarket_panel_token) {
+          clientUpdates.anymarket_panel_token = form.anymarketPanelToken
+        }
+
+        if (Object.keys(clientUpdates).length > 0) {
           try {
             await apiClient.patch(
               `/api/clients/${activeClient.id}`,
-              { anymarket_token: form.anymarketToken }
+              clientUpdates
             )
+            setActiveClient({
+              ...activeClient,
+              ...clientUpdates,
+            })
           } catch (patchErr) {
-            console.warn('[ConfigModal] Aviso ao atualizar token do cliente:', patchErr.message)
+            console.warn('[ConfigModal] Aviso ao atualizar tokens do cliente:', patchErr.message)
           }
-          setActiveClient({
-            ...activeClient,
-            anymarket_token: form.anymarketToken,
-          })
         }
       }
 

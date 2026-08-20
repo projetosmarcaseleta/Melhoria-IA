@@ -12,6 +12,8 @@ import knowledgeRouter from './routes/knowledge.js'
 import insightsRouter from './routes/insights.js'
 import skillsRouter from './routes/skills.js'
 import categoriesRouter from './routes/categories.js'
+import channelBindingRouter from './routes/channelBinding.js'
+import categoryAttributesRouter from './routes/categoryAttributes.js'
 import operatorsRouter from './routes/operators.js'
 import diagnosticsRouter from './routes/diagnostics.js'
 
@@ -56,6 +58,8 @@ app.use('/api/knowledge', requireAuth, knowledgeRouter)
 app.use('/api/insights', requireAuth, insightsRouter)
 app.use('/api/skills', requireAuth, skillsRouter)
 app.use('/api/categories', requireAuth, categoriesRouter)
+app.use('/api/channel-bindings', requireAuth, channelBindingRouter)
+app.use('/api/category-attributes', requireAuth, categoryAttributesRouter)
 app.use('/api/operators', requireAuth, operatorsRouter)
 app.use('/api/diagnostics', requireAuth, diagnosticsRouter)
 

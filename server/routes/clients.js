@@ -73,7 +73,7 @@ router.get('/:id', async (req, res, next) => {
  */
 router.post('/', requireAdmin, async (req, res, next) => {
   try {
-    const { name, slug, anymarket_token, settings } = req.body ?? {}
+    const { name, slug, anymarket_token, anymarket_panel_token, marketplaces, settings } = req.body ?? {}
 
     if (!name || !slug) {
       return res.status(400).json({ error: 'name e slug são obrigatórios.' })
@@ -104,6 +104,12 @@ router.post('/', requireAdmin, async (req, res, next) => {
       name,
       slug: cleanSlug,
       anymarket_token: anymarket_token || null,
+      // Token do PAINEL — outro token, outro host, e expira (é de sessão). Usado só
+      // pelo vínculo de categoria por canal. Ver server/services/channelBindClient.js.
+      anymarket_panel_token: anymarket_panel_token || null,
+      // Canais a checar quando o painel não responde; a fonte preferida é a própria
+      // conta, via GET /rest/api/marketplaces.
+      marketplaces: Array.isArray(marketplaces) ? marketplaces : null,
       settings: defaultSettings,
       isActive: true,
       createdAt: FieldValue.serverTimestamp(),
@@ -125,7 +131,7 @@ router.post('/', requireAdmin, async (req, res, next) => {
 router.patch('/:id', requireAdmin, async (req, res, next) => {
   try {
     const updates = {}
-    const allowed = ['name', 'slug', 'anymarket_token', 'settings', 'isActive']
+    const allowed = ['name', 'slug', 'anymarket_token', 'anymarket_panel_token', 'marketplaces', 'settings', 'isActive']
 
     for (const key of allowed) {
       if (req.body[key] !== undefined) {

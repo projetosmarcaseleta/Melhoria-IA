@@ -138,6 +138,7 @@ export function exportLogsToXlsx(logs) {
     return [
       {
         ID: log.productId,
+        SKU: log.sku ?? log.idSku ?? '',
         TITULO_ANTES: titulo?.before ?? '',
         TITULO_DEPOIS: titulo?.after ?? '',
         DESCRICAO_ANTES: convertToHtml(descricao?.before ?? ''),
@@ -153,6 +154,7 @@ export function exportLogsToXlsx(logs) {
   // Ajusta largura das colunas
   ws['!cols'] = [
     { wch: 15 },  // ID
+    { wch: 20 },  // SKU
     { wch: 60 },  // TITULO_ANTES
     { wch: 60 },  // TITULO_DEPOIS
     { wch: 100 }, // DESCRICAO_ANTES
@@ -171,13 +173,15 @@ export function exportLogsToXlsx(logs) {
 /**
  * Exporta produtos bloqueados (que não podem ser PATCHados via API)
  * para que o usuário altere manualmente na AnyMarket.
- * Colunas: ID, TIPO, CALCULO_PRECO, TITULO_NOVO, DESCRICAO_NOVA
+ * Colunas: ID, SKU, TIPO, CALCULO_PRECO, TITULO_ANTERIOR, TITULO_NOVO, DESCRICAO_NOVA
  */
 export function exportBlockedProductsToXlsx(products) {
   const rows = products.map((p) => ({
     ID: p.id,
+    SKU: p.sku || p.idSku || p.partnerId || '',
     TIPO: p.productType ?? 'SIMPLE',
     CALCULO_PRECO: p.priceCalculation ?? '',
+    TITULO_ANTERIOR: p.title ?? '',
     TITULO_NOVO: p.newTitle ?? p.title ?? '',
     DESCRICAO_NOVA: convertToHtml(p.newDescription ?? p.description ?? ''),
   }))
@@ -186,8 +190,10 @@ export function exportBlockedProductsToXlsx(products) {
 
   ws['!cols'] = [
     { wch: 15 },   // ID
+    { wch: 20 },   // SKU
     { wch: 18 },   // TIPO
     { wch: 20 },   // CALCULO_PRECO
+    { wch: 60 },   // TITULO_ANTERIOR
     { wch: 60 },   // TITULO_NOVO
     { wch: 120 },  // DESCRICAO_NOVA
   ]
@@ -202,8 +208,11 @@ export function exportBlockedProductsToXlsx(products) {
 export function exportReviewToXlsx(products) {
   const rows = products.map((p) => ({
     ID: p.id,
-    TITULO: p.newTitle ?? p.title ?? '',
-    DESCRICAO: convertToHtml(p.newDescription ?? p.description ?? ''),
+    SKU: p.sku || p.idSku || p.partnerId || '',
+    TITULO_ANTERIOR: p.title ?? '',
+    TITULO_NOVO: p.newTitle ?? p.title ?? '',
+    DESCRICAO_ANTERIOR: convertToHtml(p.description ?? ''),
+    DESCRICAO_NOVA: convertToHtml(p.newDescription ?? p.description ?? ''),
   }))
 
   const ws = XLSX.utils.json_to_sheet(rows)
@@ -211,8 +220,11 @@ export function exportReviewToXlsx(products) {
   // Ajusta largura das colunas
   ws['!cols'] = [
     { wch: 15 },   // ID
-    { wch: 60 },   // TITULO
-    { wch: 120 },  // DESCRICAO (HTML)
+    { wch: 20 },   // SKU
+    { wch: 60 },   // TITULO_ANTERIOR
+    { wch: 60 },   // TITULO_NOVO
+    { wch: 100 },  // DESCRICAO_ANTERIOR
+    { wch: 100 },  // DESCRICAO_NOVA
   ]
 
   const wb = XLSX.utils.book_new()

@@ -6,6 +6,10 @@
 > a categoria atual do produto é substituída — com desfazer de 1 clique. Nada no fluxo atual de título/descrição muda.
 
 Status: **Fase 1 implementada** (sync/cache da árvore, só leitura) — Fases 2 a 5 pendentes, ver §14.
+
+> **Continuação deste roadmap:** `docs/ESPECIFICACAO_CANAIS_E_ATRIBUTOS.md` — vínculo de categoria por canal (de-para)
+> e atributos obrigatórios por marketplace. É o passo que falta para o produto realmente **publicar**: categoria criada
+> aqui nasce sem de-para de canal, e sem ele o marketplace recusa o anúncio.
 Autor: arquitetura assistida — decisões e pendências na seção 13.
 
 ---

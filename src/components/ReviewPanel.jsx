@@ -1081,7 +1081,6 @@ export default function ReviewPanel() {
         <CategoryModal
           product={categoryProduct}
           onClose={() => setCategoryProduct(null)}
-          onApplied={() => setCategoryProduct(null)}
         />
       )}
 

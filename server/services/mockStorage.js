@@ -335,3 +335,171 @@ export function resetMockCategoryState() {
   mockAttachments.clear()
   mockAttachmentSeq = 0
 }
+
+// ── Canais e atributos (cliente de teste) ───────────────────────────────────
+//
+// A conta de teste nunca fala com o painel da AnyMarket. Estes dados fazem o fluxo
+// inteiro de vínculo (sugestão → drill-down → de-para → atributos) rodar em memória,
+// incluindo os casos que interessam: canal já vinculado, canal pendente, e atributo
+// obrigatório num canal e opcional no outro.
+//
+// Diferença consciente em relação à produção: aqui o "estado no AnyMarket" e o
+// espelho do Firestore são o MESMO mapa — no cliente real são duas fontes, e é a
+// §1.1 que reconcilia as duas.
+
+export const MOCK_MARKETPLACES = ['MERCADO_LIVRE', 'MAGAZINE_LUIZA']
+
+/** Árvore nativa falsa de cada canal: `leaf: true` é o que `canBeSelected` marca. */
+const MOCK_MARKETPLACE_TREE = {
+  MERCADO_LIVRE: [
+    { code: 'MLB1000', name: 'Casa, Móveis e Decoração', parent: null },
+    { code: 'MLB1010', name: 'Cozinha', parent: 'MLB1000' },
+    { code: 'MLB63512', name: 'Panelas e Frigideiras', parent: 'MLB1010', leaf: true },
+    { code: 'MLB63513', name: 'Jogos de Panelas', parent: 'MLB1010', leaf: true },
+    { code: 'MLB5672', name: 'Acessórios para Veículos', parent: null },
+    { code: 'MLB1767', name: 'Pneus', parent: 'MLB5672', leaf: true },
+  ],
+  MAGAZINE_LUIZA: [
+    { code: 'ML-CASA', name: 'Casa e Construção', parent: null },
+    { code: 'ML-COZ', name: 'Utilidades de Cozinha', parent: 'ML-CASA' },
+    { code: 'ML-PAN', name: 'Panelas', parent: 'ML-COZ', leaf: true },
+  ],
+}
+
+/** Um nível da árvore do canal, no formato que `normalizeMarketplaceLevel` consome. */
+export function getMockMarketplaceLevel(marketplace, codeInMarketPlace = null) {
+  const nodes = MOCK_MARKETPLACE_TREE[marketplace] ?? []
+  const byCode = new Map(nodes.map((n) => [n.code, n]))
+
+  const buildPath = (code) => {
+    const trilha = []
+    let atual = byCode.get(code)
+    while (atual) {
+      trilha.unshift({ codeInMarketPlace: atual.code, name: atual.name })
+      atual = atual.parent ? byCode.get(atual.parent) : null
+    }
+    return trilha
+  }
+
+  const current = codeInMarketPlace ? byCode.get(codeInMarketPlace) ?? null : null
+  const childs = nodes
+    .filter((n) => (codeInMarketPlace ? n.parent === codeInMarketPlace : n.parent === null))
+    .map((n) => ({
+      codeInMarketPlace: n.code,
+      name: n.name,
+      canBeSelected: Boolean(n.leaf),
+      completePath: buildPath(n.code)
+        .map((p) => p.name)
+        .join('/'),
+    }))
+
+  return {
+    name: current?.name ?? null,
+    canBeSelected: Boolean(current?.leaf),
+    completePath: current ? buildPath(current.code).map((p) => p.name).join('/') : null,
+    path: codeInMarketPlace ? buildPath(codeInMarketPlace) : [],
+    childs,
+  }
+}
+
+/** Sugestões falsas: só folhas, com percentual decrescente. */
+export function getMockBindSuggestions(marketplace) {
+  const nodes = (MOCK_MARKETPLACE_TREE[marketplace] ?? []).filter((n) => n.leaf)
+  return nodes.slice(0, 3).map((n, i) => ({
+    codeInMarketPlace: n.code,
+    name: n.name,
+    completePath: getMockMarketplaceLevel(marketplace, n.code).completePath,
+    percentage: [66.67, 41.2, 12.5][i] ?? 5,
+  }))
+}
+
+/**
+ * Payload falso de `/v2/categories/characteristics/groups`.
+ *
+ * "Voltagem" é obrigatório no Mercado Livre e opcional na Magalu de propósito: é o
+ * caso que a especificação (§2) manda cobrir — obrigatoriedade varia por canal.
+ */
+export function getMockCharacteristicGroups() {
+  return [
+    {
+      id: 900,
+      name: 'Ficha técnica',
+      categories: [{ id: 1012, name: 'Panelas' }],
+      characteristics: [
+        {
+          id: 9001,
+          name: 'Marca',
+          valueType: 'TEXT',
+          characteristicItemMarketPlaces: [
+            { marketPlace: 'MERCADO_LIVRE', required: true, idInMarketPlace: 'BRAND' },
+            { marketPlace: 'MAGAZINE_LUIZA', required: true, idInMarketPlace: 'marca' },
+          ],
+        },
+        {
+          id: 9002,
+          name: 'Voltagem',
+          valueType: 'LIST',
+          typeId: 77,
+          characteristicItemMarketPlaces: [
+            { marketPlace: 'MERCADO_LIVRE', required: true, idInMarketPlace: 'VOLTAGE' },
+            { marketPlace: 'MAGAZINE_LUIZA', required: false, idInMarketPlace: 'voltagem' },
+          ],
+        },
+        { id: 9003, name: 'Observações', valueType: 'TEXT', required: false },
+      ],
+    },
+  ]
+}
+
+const mockChannelBindings = new Map()
+const mockBindIntents = new Map()
+
+const bindKey = (clientId, categoryId, marketplace) => `${clientId}::${categoryId}::${marketplace}`
+
+export function saveMockChannelBinding(clientId, record) {
+  const key = bindKey(clientId, record.anymarketCategoryId, record.marketplace)
+  const saved = { ...record, clientId }
+  mockChannelBindings.set(key, saved)
+  return saved
+}
+
+export function getMockChannelBinding(clientId, categoryId, marketplace) {
+  return mockChannelBindings.get(bindKey(clientId, categoryId, marketplace)) ?? null
+}
+
+/** Todos os de-para de uma categoria — equivalente ao `marketPlaces[]` da §1.1. */
+export function listMockChannelBindings(clientId, categoryId) {
+  return [...mockChannelBindings.values()].filter(
+    (b) => b.clientId === clientId && String(b.anymarketCategoryId) === String(categoryId)
+  )
+}
+
+/**
+ * Grava a intenção com MERGE — igual ao `set({ merge: true })` do Firestore.
+ *
+ * Não é detalhe: o serviço registra a intenção em etapas (`cleaning` →
+ * `attributes_cleaned` → erro), cada uma mandando só os campos daquele momento. Um
+ * mock que substituísse o documento perderia `codeInMarketPlace`/`cleanedAtMs` e o
+ * retry repetiria a limpeza — divergindo do comportamento real justamente no caso
+ * que a §5 pede para acertar.
+ */
+export function saveMockBindIntent(clientId, intentId, data) {
+  const key = `${clientId}::${intentId}`
+  const saved = { ...(mockBindIntents.get(key) ?? {}), ...data, id: intentId, clientId }
+  mockBindIntents.set(key, saved)
+  return saved
+}
+
+export function getMockBindIntent(clientId, intentId) {
+  return mockBindIntents.get(`${clientId}::${intentId}`) ?? null
+}
+
+export function deleteMockBindIntent(clientId, intentId) {
+  return mockBindIntents.delete(`${clientId}::${intentId}`)
+}
+
+/** Só para testes: zera vínculos de canal e intenções em memória. */
+export function resetMockChannelBindState() {
+  mockChannelBindings.clear()
+  mockBindIntents.clear()
+}

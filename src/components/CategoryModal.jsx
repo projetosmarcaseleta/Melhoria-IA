@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import useStore from '../store/useStore'
 import { suggestCategory, approveCategory, attachCategory, rejectCategory, syncCategoryTree } from '../services/categoryService'
+import ChannelBindingPanel from './ChannelBindingPanel'
 
 /**
  * Modal de categoria por produto — o caminho principal da feature.
@@ -26,6 +27,7 @@ export default function CategoryModal({ product, onClose, onApplied }) {
   const [tentativa, setTentativa] = useState(0)
   const [confirmNewRoot, setConfirmNewRoot] = useState(false)
   const [result, setResult] = useState(null)
+  const [channelTargetCategory, setChannelTargetCategory] = useState(null)
 
   // Trava scroll do body enquanto o modal estiver aberto
   useEffect(() => {
@@ -283,6 +285,10 @@ export default function CategoryModal({ product, onClose, onApplied }) {
               confirmNewRoot={confirmNewRoot}
               working={phase === 'working'}
               onUseExisting={handleUseExisting}
+              onInspectChannels={(cat) => {
+                setChannelTargetCategory(cat)
+                setPhase('channels')
+              }}
             />
           )}
 
@@ -298,7 +304,30 @@ export default function CategoryModal({ product, onClose, onApplied }) {
                   Anterior: {result.attachment.previousCategory.fullPath} · desfazer disponível na aba Logs
                 </p>
               )}
+
+              {/* Categoria trocada NÃO significa produto publicável: sem de-para de
+                  canal, o marketplace recusa. Este é o momento certo de mostrar isso —
+                  categoria recém-criada nasce sem vínculo nenhum. */}
+              {result?.leafId && (
+                <div className="mt-5 text-left">
+                  <ChannelBindingPanel
+                    clientId={activeClient.id}
+                    anymarketCategoryId={String(result.leafId)}
+                    categoryPath={proposal?.proposedPath?.join(' › ')}
+                    productId={product.id}
+                  />
+                </div>
+              )}
             </div>
+          )}
+
+          {phase === 'channels' && (
+            <ChannelBindingPanel
+              clientId={activeClient.id}
+              anymarketCategoryId={String(channelTargetCategory?.id ?? proposal?.leafCategoryId ?? proposal?.currentCategory?.id)}
+              categoryPath={channelTargetCategory?.path ?? proposal?.currentCategory?.fullPath ?? proposal?.proposedPath?.join(' › ')}
+              productId={product.id}
+            />
           )}
         </div>
 
@@ -314,9 +343,25 @@ export default function CategoryModal({ product, onClose, onApplied }) {
                 <button onClick={handleReject} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-rose-400">
                   Discordo da categoria
                 </button>
-                <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-bold text-white" style={{ background: '#059669' }}>
-                  Fechar
-                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setChannelTargetCategory({
+                        id: proposal.currentCategory?.id ?? proposal.leafCategoryId,
+                        path: proposal.currentCategory?.fullPath ?? proposal.proposedPath?.join(' › '),
+                      })
+                      setPhase('channels')
+                    }}
+                    className="px-3 py-2 rounded-lg text-xs font-bold border hover:border-slate-500 hover:text-white transition-all"
+                    style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'var(--border-subtle, #2a2a35)', color: '#cbd5e1' }}
+                  >
+                    Canais e atributos
+                  </button>
+                  <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-bold text-white" style={{ background: '#059669' }}>
+                    Fechar
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -325,6 +370,23 @@ export default function CategoryModal({ product, onClose, onApplied }) {
                 </button>
 
                 <div className="flex items-center gap-2">
+                  {proposal.currentCategory?.id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChannelTargetCategory({
+                          id: proposal.currentCategory.id,
+                          path: proposal.currentCategory.fullPath ?? proposal.currentCategory.name,
+                        })
+                        setPhase('channels')
+                      }}
+                      className="px-3 py-2 rounded-lg text-xs font-bold border hover:border-indigo-500 hover:text-white transition-all"
+                      style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'var(--border-subtle, #2a2a35)', color: '#cbd5e1' }}
+                      title="Verificar de-para e atributos da categoria atual sem alterar o produto"
+                    >
+                      Canais e atributos (atual)
+                    </button>
+                  )}
                   <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-300 hover:text-white">
                     Cancelar
                   </button>
@@ -350,6 +412,22 @@ export default function CategoryModal({ product, onClose, onApplied }) {
             Criando categoria e aplicando ao produto…
           </div>
         )}
+
+        {(phase === 'channels' || phase === 'done') && (
+          <div
+            className="flex items-center justify-end gap-2 px-5 py-4"
+            style={{ borderTop: '1px solid var(--border-subtle, #2a2a35)' }}
+          >
+            {phase === 'channels' && (
+              <button onClick={() => setPhase('review')} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-300 hover:text-white">
+                ← Voltar
+              </button>
+            )}
+            <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-bold text-white" style={{ background: '#059669' }}>
+              Fechar
+            </button>
+          </div>
+        )}
       </div>
     </div>,
     document.body
@@ -357,7 +435,7 @@ export default function CategoryModal({ product, onClose, onApplied }) {
 }
 
 /** Bloco "de → para" com selo por nível — é o que torna a aprovação informada. */
-function ProposalReview({ proposal, confirmNewRoot, working, onUseExisting }) {
+function ProposalReview({ proposal, confirmNewRoot, working, onUseExisting, onInspectChannels }) {
   const níveis = [
     ...(proposal.reusedPrefix ?? []).map((n) => ({ name: n.name, existing: true, meta: n })),
     ...(proposal.missingTail ?? []).map((n) => ({ name: n.name, existing: false, meta: n })),
@@ -389,12 +467,29 @@ function ProposalReview({ proposal, confirmNewRoot, working, onUseExisting }) {
         </div>
       )}
 
-      <div className="mb-4">
-        <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">Categoria atual</p>
-        <p className="text-sm text-slate-300">
-          {proposal.currentCategory?.fullPath ?? proposal.currentCategory?.name ?? '(sem categoria)'}
-          {proposal.currentCategory?.id && <span className="text-slate-600"> · #{proposal.currentCategory.id}</span>}
-        </p>
+      <div className="mb-4 flex items-center justify-between gap-2 bg-slate-900/50 p-2.5 rounded-lg border border-slate-800">
+        <div>
+          <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-0.5">Categoria atual</p>
+          <p className="text-sm text-slate-200 font-medium">
+            {proposal.currentCategory?.fullPath ?? proposal.currentCategory?.name ?? '(sem categoria)'}
+            {proposal.currentCategory?.id && <span className="text-slate-500 text-xs"> · #{proposal.currentCategory.id}</span>}
+          </p>
+        </div>
+        {proposal.currentCategory?.id && (
+          <button
+            type="button"
+            onClick={() =>
+              onInspectChannels?.({
+                id: proposal.currentCategory.id,
+                path: proposal.currentCategory.fullPath ?? proposal.currentCategory.name,
+              })
+            }
+            className="shrink-0 px-2.5 py-1.5 rounded-md text-[11px] font-bold border border-slate-700 bg-slate-800 text-indigo-300 hover:text-white hover:border-indigo-500 hover:bg-indigo-950/40 transition-all flex items-center gap-1"
+            title="Verificar de-para e atributos desta categoria atual"
+          >
+            <span>🔍 Ver canais e atributos</span>
+          </button>
+        )}
       </div>
 
       <div className="mb-4">
@@ -529,8 +624,8 @@ function ProposalReview({ proposal, confirmNewRoot, working, onUseExisting }) {
           style={{ background: 'rgba(255,255,255,0.03)', color: '#9a9ab0' }}
         >
           Criar categoria no AnyMarket não é reversível pelo CRIA. Já a troca de categoria do produto é: fica
-          registrada com desfazer de 1 clique na aba Logs. Categoria nova nasce sem de-para de canal — configure no
-          AnyMarket antes de publicar nos marketplaces.
+          registrada com desfazer de 1 clique na aba Logs. Categoria nova nasce sem de-para de canal — o passo de
+          vínculo por canal aparece aqui mesmo depois de aplicar, e sem ele o produto não publica nos marketplaces.
         </div>
       )}
 

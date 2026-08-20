@@ -107,6 +107,107 @@ Não incluir comentários, explicações ou qualquer texto fora do HTML.`,
 import { isTestClient, getMockPrompt, saveMockPrompt } from '../services/mockStorage.js'
 
 /**
+ * GET /api/prompts/global
+ * Retorna os prompts-núcleo do sistema (coleção `global_prompts`).
+ * Qualquer operador autenticado pode ler; a edição exige admin.
+ */
+router.get('/global', async (req, res, next) => {
+  try {
+    const result = { hardcoded: DEFAULT_PROMPTS }
+
+    for (const type of ['titulo', 'descricao']) {
+      try {
+        const doc = await db.collection('global_prompts').doc(type).get()
+        if (doc.exists) {
+          result[type] = {
+            content: doc.data().content,
+            version: doc.data().version ?? 1,
+            updatedAt: doc.data().updatedAt?.toDate?.().toISOString() ?? null,
+            updatedByName: doc.data().updatedByName ?? null,
+          }
+        } else {
+          result[type] = { content: DEFAULT_PROMPTS[type], version: 0, source: 'hardcoded' }
+        }
+      } catch (dbErr) {
+        console.warn(`[Prompts] Falha ao ler global_prompts/${type}:`, dbErr.message)
+        result[type] = { content: DEFAULT_PROMPTS[type], version: 0, source: 'hardcoded' }
+      }
+    }
+
+    return res.json(result)
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * PUT /api/prompts/global
+ * Atualiza os prompts-núcleo do sistema. Requer role = admin.
+ *
+ * O prompt global é o "piso" que todo cliente sem personalização recebe.
+ * Alterá-lo impacta TODOS os clientes que não têm prompt próprio — por isso
+ * exige admin e archiva a versão anterior.
+ */
+router.put('/global', async (req, res, next) => {
+  try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Apenas administradores podem editar o núcleo do sistema.' })
+    }
+
+    const { titulo, descricao } = req.body ?? {}
+    if (!titulo && !descricao) {
+      return res.status(400).json({ error: 'Informe pelo menos um dos campos: titulo ou descricao.' })
+    }
+
+    const batch = db.batch()
+    const salvos = []
+
+    for (const [type, novoConteudo] of [['titulo', titulo], ['descricao', descricao]]) {
+      if (!novoConteudo) continue
+
+      const ref = db.collection('global_prompts').doc(type)
+      const atual = await ref.get()
+      const versaoAtual = atual.exists ? atual.data().version ?? 1 : 0
+
+      // Archiva a versão que está saindo
+      if (atual.exists && atual.data().content) {
+        const histRef = db.collection('global_prompt_history').doc()
+        batch.set(histRef, {
+          type,
+          content: atual.data().content,
+          version: versaoAtual,
+          replacedBy: req.user.id,
+          replacedByName: req.user.name ?? null,
+          archivedAt: FieldValue.serverTimestamp(),
+        })
+      }
+
+      batch.set(ref, {
+        content: novoConteudo,
+        version: versaoAtual + 1,
+        updatedBy: req.user.id,
+        updatedByName: req.user.name ?? null,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+
+      salvos.push({ type, version: versaoAtual + 1 })
+    }
+
+    await batch.commit()
+
+    // Invalida cache de TODOS os clientes que usam o global
+    promptCache.clear()
+
+    console.log(
+      `[Prompts] ${req.user.name ?? req.user.id} atualizou GLOBAL: ${salvos.map((s) => `${s.type} v${s.version}`).join(', ')}`
+    )
+    return res.json({ ok: true, message: 'Núcleo do sistema atualizado.', salvos })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
  * GET /api/prompts/:clientId
  * Retorna os prompts ativos de um cliente no Firestore e os prompts defaults globais.
  */

@@ -57,10 +57,14 @@ export function defaultContentTypeFor(method) {
 }
 
 export class AnymarketApiError extends Error {
-  constructor(message, { status = null, data = null, method = null, path = null, cause = null } = {}) {
+  constructor(message, { status = null, data = null, method = null, path = null, cause = null, code = null } = {}) {
     super(message)
     this.name = 'AnymarketApiError'
     this.status = status
+    // `code` é o que a UI usa para escolher o botão certo (ex.: `token_missing` →
+    // "abra Configurações"). Sem isso, os chamadores já passavam o campo e ele era
+    // descartado no construtor — o código chegava como null na resposta HTTP.
+    this.code = code
     this.data = data
     this.method = method
     this.path = path
@@ -211,6 +215,15 @@ export async function anymarketRequest({
   timeoutMs = anymarketConfig.timeoutMs,
   bulk = false,
   contentType = null,
+  // Host alternativo para a API interna do painel (app.anymarket.com.br/rest/api),
+  // usada por channelBindClient.js. Fica aqui para o vínculo de canal herdar rate
+  // limit, retry e desaceleração adaptativa — a cota é do MESMO gumgaToken, então
+  // dividir a fila com as chamadas da v2 é o comportamento correto, não um atalho.
+  baseUrl = null,
+  // Teto de tentativas por chamada. O padrão da conta serve para a v2; a API interna
+  // do painel responde 500 genérico de forma SISTEMÁTICA quando o gumgaToken não dá
+  // acesso, e repetir isso três vezes só faz o operador esperar 4s por um erro certo.
+  maxRetries = anymarketConfig.maxRetries,
 }) {
   if (!token) {
     throw new AnymarketApiError('Token AnyMarket (gumgaToken) ausente na chamada.', { method, path })
@@ -221,11 +234,12 @@ export async function anymarketRequest({
   // o header que eu deixei de replicar quando troquei o webhook por HTTP direto.
   let mediaType = contentType ?? defaultContentTypeFor(method)
 
-  const target = url ? normalizeFollowUrl(url) : `${anymarketConfig.baseUrl}${path.startsWith('/') ? path : `/${path}`}`
+  const root = (baseUrl ?? anymarketConfig.baseUrl).replace(/\/+$/, '')
+  const target = url ? normalizeFollowUrl(url) : `${root}${path.startsWith('/') ? path : `/${path}`}`
   const queue = bulk ? bulkLimiter : limiter
   let lastError = null
 
-  for (let attempt = 0; attempt <= anymarketConfig.maxRetries; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await queue.run(() =>
         axios({
@@ -256,14 +270,14 @@ export async function anymarketRequest({
       // resolve sem depender de eu ter acertado o padrão de cada endpoint.
       if (status === 415 && data !== undefined) {
         const alternativa = mediaType === 'application/merge-patch+json' ? 'application/json' : 'application/merge-patch+json'
-        if (mediaType !== alternativa && attempt < anymarketConfig.maxRetries) {
+        if (mediaType !== alternativa && attempt < maxRetries) {
           console.warn(`[AnymarketClient] ${method} ${path || target} → 415 com "${mediaType}"; tentando "${alternativa}".`)
           mediaType = alternativa
           continue
         }
       }
 
-      if (!isRetryable(status) || attempt === anymarketConfig.maxRetries) break
+      if (!isRetryable(status) || attempt === maxRetries) break
 
       const retryAfter = parseRetryAfter(err.response?.headers?.['retry-after'])
 
@@ -285,7 +299,7 @@ export async function anymarketRequest({
       }
 
       console.warn(
-        `[AnymarketClient] ${method} ${path || target} → ${status ?? 'rede'}; aguardando ${Math.round(backoff / 1000)}s (tentativa ${attempt + 1}/${anymarketConfig.maxRetries})`
+        `[AnymarketClient] ${method} ${path || target} → ${status ?? 'rede'}; aguardando ${Math.round(backoff / 1000)}s (tentativa ${attempt + 1}/${maxRetries})`
       )
       await sleep(backoff)
     }
@@ -302,6 +316,8 @@ export function extractItems(payload) {
   if (Array.isArray(payload.data)) return payload.data
   if (Array.isArray(payload.categories)) return payload.categories
   if (Array.isArray(payload.items)) return payload.items
+  // Dialeto da API interna do painel: { pageSize, count, start, values: [...] }.
+  if (Array.isArray(payload.values)) return payload.values
   return []
 }
 

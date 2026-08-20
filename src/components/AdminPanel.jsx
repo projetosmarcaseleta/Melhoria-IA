@@ -23,10 +23,19 @@ export default function AdminPanel() {
   const [newOperator, setNewOperator] = useState({ name: '', email: '', password: '', role: 'editor' })
   const [isCreatingOperator, setIsCreatingOperator] = useState(false)
 
+  // ── Estados de Prompts Globais (Núcleo do Sistema) ────────────────────────
+  const [globalPrompts, setGlobalPrompts] = useState({ titulo: '', descricao: '' })
+  const [globalHardcoded, setGlobalHardcoded] = useState({ titulo: '', descricao: '' })
+  const [globalMeta, setGlobalMeta] = useState({ titulo: null, descricao: null })
+  const [globalLoading, setGlobalLoading] = useState(false)
+  const [isSavingGlobal, setIsSavingGlobal] = useState(false)
+  const [globalPromptTab, setGlobalPromptTab] = useState('descricao') // 'descricao' | 'titulo'
+
   useEffect(() => {
     fetchClients()
     if (auth.user?.role === 'admin') {
       fetchOperators()
+      fetchGlobalPrompts()
     }
   }, [])
 
@@ -184,6 +193,59 @@ export default function AdminPanel() {
     }
   }
 
+  // ── Ações de Prompts Globais (Núcleo do Sistema) ────────────────────────
+  const fetchGlobalPrompts = async () => {
+    try {
+      setGlobalLoading(true)
+      const res = await apiClient.get('/api/prompts/global')
+      setGlobalPrompts({
+        titulo: res.data?.titulo?.content || res.data?.hardcoded?.titulo || '',
+        descricao: res.data?.descricao?.content || res.data?.hardcoded?.descricao || '',
+      })
+      setGlobalHardcoded({
+        titulo: res.data?.hardcoded?.titulo || '',
+        descricao: res.data?.hardcoded?.descricao || '',
+      })
+      setGlobalMeta({
+        titulo: res.data?.titulo || null,
+        descricao: res.data?.descricao || null,
+      })
+    } catch (err) {
+      console.error('[AdminPanel] Erro ao buscar prompts globais:', err)
+      addToast('error', 'Erro ao carregar prompts globais do sistema.')
+    } finally {
+      setGlobalLoading(false)
+    }
+  }
+
+  const handleSaveGlobalPrompts = async (e) => {
+    e.preventDefault()
+    try {
+      setIsSavingGlobal(true)
+      await apiClient.put('/api/prompts/global', {
+        titulo: globalPrompts.titulo,
+        descricao: globalPrompts.descricao,
+      })
+      addToast('success', 'Pronto! Núcleo do sistema (prompts globais) atualizado.')
+      fetchGlobalPrompts()
+    } catch (err) {
+      console.error('[AdminPanel] Erro ao salvar prompts globais:', err)
+      addToast('error', err.response?.data?.error || 'Erro ao salvar prompt global.')
+    } finally {
+      setIsSavingGlobal(false)
+    }
+  }
+
+  const handleResetToHardcoded = (type) => {
+    const nome = type === 'descricao' ? 'Descrição' : 'Título'
+    if (!confirm(`Deseja restaurar o prompt padrão de ${nome} para a versão original do código-fonte?`)) return
+    setGlobalPrompts((prev) => ({
+      ...prev,
+      [type]: globalHardcoded[type] || '',
+    }))
+    addToast('info', `Prompt de ${nome} restaurado localmente. Clique em "Salvar Alterações" para aplicar.`)
+  }
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-16 animate-fadeIn">
       {/* Banner de Título & Sub-Navegação */}
@@ -197,13 +259,13 @@ export default function AdminPanel() {
               Painel Administrativo & Gestão
             </h2>
             <p className="text-xs text-slate-400">
-              Cadastre e gerencie novos clientes (empresas) e operadores (usuários da equipe).
+              Cadastre e gerencie novos clientes, operadores da equipe e os prompts do núcleo do sistema.
             </p>
           </div>
         </div>
 
         {/* Tab Selector */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-xl shrink-0">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-xl shrink-0 flex-wrap">
           <button
             onClick={() => setActiveTab('clients')}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
@@ -213,20 +275,37 @@ export default function AdminPanel() {
             }`}
           >
             <span>🏢</span>
-            <span>Clientes (Empresas)</span>
+            <span>Clientes</span>
           </button>
           {auth.user?.role === 'admin' && (
-            <button
-              onClick={() => setActiveTab('operators')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-                activeTab === 'operators'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <span>👤</span>
-              <span>Operadores (Equipe)</span>
-            </button>
+            <>
+              <button
+                onClick={() => setActiveTab('operators')}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                  activeTab === 'operators'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>👤</span>
+                <span>Operadores</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('prompts')
+                  fetchGlobalPrompts()
+                }}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                  activeTab === 'prompts'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>🧠</span>
+                <span>Núcleo do Sistema (Prompts)</span>
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -525,6 +604,136 @@ export default function AdminPanel() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── SEÇÃO 3: NÚCLEO DO SISTEMA (PROMPTS GLOBAIS) ── */}
+      {activeTab === 'prompts' && auth.user?.role === 'admin' && (
+        <div className="space-y-6">
+          {/* Card Explicativo e Seletor de Tipo */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2">
+                  <span>🧠</span> Núcleo do Sistema — Prompts Globais
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Estes prompts compõem o motor padrão de inteligência artificial do CRIA. Eles são herdados por todos os clientes que utilizam o prompt padrão da plataforma.
+                </p>
+              </div>
+
+              {/* Seletor Título / Descrição */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-xl shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setGlobalPromptTab('descricao')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    globalPromptTab === 'descricao'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>📄</span>
+                  <span>Descrição</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGlobalPromptTab('titulo')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    globalPromptTab === 'titulo'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>🏷️</span>
+                  <span>Título</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Metadados e Status da Versão Vigente */}
+            {globalLoading ? (
+              <div className="py-12 text-center text-xs text-slate-400">
+                Carregando diretrizes do núcleo...
+              </div>
+            ) : (
+              <form onSubmit={handleSaveGlobalPrompts} className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 bg-slate-950/60 px-4 py-2.5 rounded-xl border border-slate-800/80">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span className="font-semibold text-slate-200">
+                      Prompt de {globalPromptTab === 'descricao' ? 'Descrição' : 'Título'}
+                    </span>
+                    <span className="text-slate-500">|</span>
+                    <span>
+                      {globalMeta[globalPromptTab]?.version
+                        ? `Versão ${globalMeta[globalPromptTab].version} (Salvo no Firestore)`
+                        : 'Padrão original do código-fonte (Hardcoded)'}
+                    </span>
+                  </div>
+
+                  {globalMeta[globalPromptTab]?.updatedAt && (
+                    <span className="text-[11px] text-slate-500">
+                      Atualizado por {globalMeta[globalPromptTab]?.updatedByName || 'Admin'} em{' '}
+                      {new Date(globalMeta[globalPromptTab].updatedAt).toLocaleString('pt-BR')}
+                    </span>
+                  )}
+                </div>
+
+                {/* Editor de Texto Monospace */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                    <span>Instruções do Sistema (System Prompt)</span>
+                    <span className="font-mono">
+                      {(globalPrompts[globalPromptTab] || '').length} caracteres
+                    </span>
+                  </div>
+
+                  <textarea
+                    rows={18}
+                    value={globalPrompts[globalPromptTab] || ''}
+                    onChange={(e) =>
+                      setGlobalPrompts((prev) => ({
+                        ...prev,
+                        [globalPromptTab]: e.target.value,
+                      }))
+                    }
+                    className="w-full p-4 rounded-xl font-mono text-xs leading-relaxed bg-slate-950 border border-slate-700/80 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-y"
+                    placeholder={`Insira as diretrizes para geração de ${globalPromptTab}...`}
+                  />
+                </div>
+
+                {/* Ações Inferiores */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleResetToHardcoded(globalPromptTab)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all flex items-center gap-1.5"
+                  >
+                    <span>↺ Restaurar padrão de fábrica (código-fonte)</span>
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={isSavingGlobal}
+                    className="px-6 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isSavingGlobal ? (
+                      <>
+                        <span className="login-spinner" />
+                        <span>Salvando alterações...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>💾</span>
+                        <span>Salvar Alterações no Núcleo</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
             )}
           </div>
         </div>
