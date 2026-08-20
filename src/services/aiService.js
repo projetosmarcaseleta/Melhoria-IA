@@ -16,7 +16,7 @@ export async function processProductsWithAI(products, fields = ['title', 'descri
   }
 
   const payload = products.map((p) => ({
-    id: p.id,
+    id: p._key || (p.idSku ? `${p.id}-${p.idSku}` : p.id),
     title: p.title,
     description: p.description,
     characteristics: p.characteristics,

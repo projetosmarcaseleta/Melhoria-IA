@@ -35,17 +35,22 @@ export async function fetchProductsFromWebhook(ids) {
     )
   }
 
-  return raw.map((item) => ({
-    id: String(item.ID ?? item.id ?? ''),
-    idSku: String(item.ID_SKU ?? item.idSku ?? ''),
-    sku: String(item.SKU ?? item.sku ?? ''),
-    title: item.TITULO ?? item.title ?? '',
-    description: item['DESCRIÇÃO'] ?? item.DESCRICAO ?? item.description ?? '',
-    characteristics: normalizeCharacteristics(item.CARACTERISTICAS ?? item.characteristics ?? ''),
-    productType: item.TIPO ?? item.productType ?? 'SIMPLE',
-    priceCalculation: item['CÁLCULO DE PREÇO'] ?? item.CALCULO_DE_PRECO ?? item.priceCalculation ?? '',
-    status: 'idle',
-  }))
+  return raw.map((item, index) => {
+    const id = String(item.ID ?? item.id ?? '')
+    const idSku = String(item.ID_SKU ?? item.idSku ?? '')
+    return {
+      _key: idSku ? `${id}-${idSku}` : id,
+      id,
+      idSku,
+      sku: String(item.SKU ?? item.sku ?? ''),
+      title: item.TITULO ?? item.title ?? '',
+      description: item['DESCRIÇÃO'] ?? item.DESCRICAO ?? item.description ?? '',
+      characteristics: normalizeCharacteristics(item.CARACTERISTICAS ?? item.characteristics ?? ''),
+      productType: item.TIPO ?? item.productType ?? 'SIMPLE',
+      priceCalculation: item['CÁLCULO DE PREÇO'] ?? item.CALCULO_DE_PRECO ?? item.priceCalculation ?? '',
+      status: 'idle',
+    }
+  })
 }
 
 /** Normaliza características: aceita string, array de {index,value} ou array de strings */

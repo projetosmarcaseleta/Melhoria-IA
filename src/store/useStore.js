@@ -58,19 +58,19 @@ const useStore = create(
 
       setProducts: (products) => set({ products }),
 
-      updateProductStatus: (id, status) =>
+      updateProductStatus: (keyOrId, status) =>
         set((s) => ({
           products: s.products.map((p) =>
-            p.id === id ? { ...p, status } : p
+            (p._key === keyOrId || (!p._key && p.id === keyOrId)) ? { ...p, status } : p
           ),
         })),
 
       // `meta` carrega o retorno de validação do agente:
       // { titleValidation, descValidation, titleRulesApplied, descRulesApplied }
-      updateProductResult: (id, newTitle, newDescription, titleGenerationId, descGenerationId, meta = {}) =>
+      updateProductResult: (keyOrId, newTitle, newDescription, titleGenerationId, descGenerationId, meta = {}) =>
         set((s) => ({
           products: s.products.map((p) =>
-            p.id === id
+            (p._key === keyOrId || (!p._key && p.id === keyOrId))
               ? {
                   ...p,
                   newTitle,
@@ -88,19 +88,19 @@ const useStore = create(
         })),
 
       // Atualiza apenas os dados gerados (sem alterar status) — usado para edições manuais
-      updateProductNewData: (id, newTitle, newDescription) =>
+      updateProductNewData: (keyOrId, newTitle, newDescription) =>
         set((s) => ({
           products: s.products.map((p) =>
-            p.id === id ? { ...p, newTitle, newDescription } : p
+            (p._key === keyOrId || (!p._key && p.id === keyOrId)) ? { ...p, newTitle, newDescription } : p
           ),
         })),
 
       clearProducts: () => set({ products: [] }),
 
-      // Remove produtos específicos da lista pelo ID (ex: após aprovação)
-      removeProducts: (ids) =>
+      // Remove produtos específicos da lista pelo ID ou _key (ex: após aprovação)
+      removeProducts: (keysOrIds) =>
         set((s) => ({
-          products: s.products.filter((p) => !ids.includes(p.id)),
+          products: s.products.filter((p) => !keysOrIds.includes(p._key || p.id) && !keysOrIds.includes(p.id)),
         })),
 
       // ─── Logs de alterações ───────────────────────────────────────────────
@@ -170,7 +170,7 @@ const useStore = create(
 
       selectAllIds: () =>
         set((s) => ({
-          ui: { ...s.ui, selectedIds: s.products.map((p) => p.id) },
+          ui: { ...s.ui, selectedIds: s.products.map((p) => p._key || p.id) },
         })),
 
       // Define a seleção explicitamente. A aba de Revisão trabalha sobre um

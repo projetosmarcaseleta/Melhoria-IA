@@ -94,15 +94,15 @@ export default function ReviewPanel() {
   )
 
   const isLoading     = ui.isProcessing || ui.isApplying
-  const isAllSelected = reviewable.length > 0 && reviewable.every((p) => selected.includes(p.id))
+  const isAllSelected = reviewable.length > 0 && reviewable.every((p) => selected.includes(p._key || p.id))
   const attentionCount = countProductsNeedingAttention(reviewable)
 
-  const selectAll   = () => setSelectedIds(reviewable.map((p) => p.id))
+  const selectAll   = () => setSelectedIds(reviewable.map((p) => p._key || p.id))
   const deselectAll = () => clearSelection()
 
   const getFieldSelFor = (id) => {
     if (fieldSel[id]) return fieldSel[id]
-    const p = products.find((x) => x.id === id)
+    const p = products.find((x) => (x._key || x.id) === id || x.id === id)
     if (!p) return { titulo: config.applyTitles, descricao: config.applyDescriptions }
     const hasNewTitle = p.newTitle !== undefined && p.newTitle !== null && p.newTitle !== ''
     const hasNewDesc = p.newDescription !== undefined && p.newDescription !== null && p.newDescription !== ''
@@ -121,17 +121,18 @@ export default function ReviewPanel() {
     })
   }
 
-  const allTitulosOn = reviewable.every((p) => getFieldSelFor(p.id).titulo)
-  const allDescOn    = reviewable.every((p) => getFieldSelFor(p.id).descricao)
+  const allTitulosOn = reviewable.every((p) => getFieldSelFor(p._key || p.id).titulo)
+  const allDescOn    = reviewable.every((p) => getFieldSelFor(p._key || p.id).descricao)
 
   const toggleAllTitulos = () => {
     const newVal = !allTitulosOn
     setFieldSel((prev) => {
       const next = { ...prev }
       for (const p of reviewable) {
-        const cur = next[p.id] ?? getFieldSelFor(p.id)
+        const k = p._key || p.id
+        const cur = next[k] ?? getFieldSelFor(k)
         if (!newVal && !cur.descricao) continue
-        next[p.id] = { ...cur, titulo: newVal }
+        next[k] = { ...cur, titulo: newVal }
       }
       return next
     })
@@ -142,9 +143,10 @@ export default function ReviewPanel() {
     setFieldSel((prev) => {
       const next = { ...prev }
       for (const p of reviewable) {
-        const cur = next[p.id] ?? getFieldSelFor(p.id)
+        const k = p._key || p.id
+        const cur = next[k] ?? getFieldSelFor(k)
         if (!newVal && !cur.titulo) continue
-        next[p.id] = { ...cur, descricao: newVal }
+        next[k] = { ...cur, descricao: newVal }
       }
       return next
     })
@@ -160,18 +162,19 @@ export default function ReviewPanel() {
   useEffect(() => {
     const toOpen = {}
     for (const p of reviewable) {
-      if (autoOpenedRef.current.has(p.id)) continue
+      const k = p._key || p.id
+      if (autoOpenedRef.current.has(k)) continue
       if (collectViolations(p).length > 0) {
-        toOpen[p.id] = true
-        autoOpenedRef.current.add(p.id)
+        toOpen[k] = true
+        autoOpenedRef.current.add(k)
       }
     }
     if (Object.keys(toOpen).length) setExpanded((prev) => ({ ...prev, ...toOpen }))
   }, [reviewable.length, products])
 
-  const expandAll   = () => setExpanded(Object.fromEntries(reviewable.map((p) => [p.id, true])))
+  const expandAll   = () => setExpanded(Object.fromEntries(reviewable.map((p) => [p._key || p.id, true])))
   const collapseAll = () => setExpanded({})
-  const expandedCount = reviewable.filter((p) => expanded[p.id]).length
+  const expandedCount = reviewable.filter((p) => expanded[p._key || p.id]).length
 
   // ── Edição de texto ────────────────────────────────────────────────────
   /** Manda o feedback 'edited' só quando o operador para de digitar. */
@@ -233,7 +236,7 @@ export default function ReviewPanel() {
    * publicar agora. O caminho principal é handleApproveAndPublish.
    */
   const handleApproveOnly = async () => {
-    const targets = reviewable.filter((p) => selected.includes(p.id))
+    const targets = reviewable.filter((p) => selected.includes(p._key || p.id))
     if (!targets.length) { addToast('warning', 'Selecione ao menos um produto.'); return }
 
     const genIds = []
@@ -254,7 +257,7 @@ export default function ReviewPanel() {
 
     setFeedbackState((prev) => ({ ...prev, ...updatedMap }))
 
-    const approvedIds = targets.map((p) => p.id)
+    const approvedIds = targets.map((p) => p._key || p.id)
     removeProducts(approvedIds)
     setSelectedIds(selected.filter((id) => !approvedIds.includes(id)))
 
@@ -272,7 +275,7 @@ export default function ReviewPanel() {
         const df = p.descGenerationId ? feedbackState[p.descGenerationId] : null
         return tf === 'approved' || df === 'approved'
       })
-      .map((p) => p.id)
+      .map((p) => p._key || p.id)
 
     if (!approvedIds.length) return
 
@@ -283,17 +286,18 @@ export default function ReviewPanel() {
 
   const handleRedoSingle = async (product) => {
     if (isLoading) return
-    const fields = getActiveFields(getFieldSelFor(product.id))
+    const itemKey = product._key || product.id
+    const fields = getActiveFields(getFieldSelFor(itemKey))
     if (!fields.length) return
-    updateProductStatus(product.id, 'processing')
+    updateProductStatus(itemKey, 'processing')
     setProcessing(true)
     setProgress(0, 1)
     try {
       const results = await processProductsWithAI([product], fields)
       const r = results[0]
-      if (r.error) { updateProductStatus(r.id, 'error'); addToast('error', `Erro: ${r.error}`) }
+      if (r.error) { updateProductStatus(r.id || itemKey, 'error'); addToast('error', `Erro: ${r.error}`) }
       else {
-        updateProductResult(r.id,
+        updateProductResult(r.id || itemKey,
           fields.includes('title') ? (r.newTitle ?? product.newTitle ?? '') : (product.newTitle ?? ''),
           fields.includes('description') ? (r.newDescription ?? product.newDescription ?? '') : (product.newDescription ?? ''),
           r.titleGenerationId ?? product.titleGenerationId,
@@ -315,7 +319,7 @@ export default function ReviewPanel() {
           addToast('success', 'Pronto! Anúncio refeito.')
         }
       }
-    } catch (e) { updateProductStatus(product.id, 'error'); addToast('error', 'Erro: ' + e.message) }
+    } catch (e) { updateProductStatus(itemKey, 'error'); addToast('error', 'Erro: ' + e.message) }
     finally { setProcessing(false); setProgress(0, 0) }
   }
 
@@ -325,18 +329,19 @@ export default function ReviewPanel() {
     cancelProcessRef.current = true
     setProcessing(false)
     useStore.getState().products.forEach((p) => {
-      if (p.status === 'processing') updateProductStatus(p.id, 'processed')
+      const itemKey = p._key || p.id
+      if (p.status === 'processing') updateProductStatus(itemKey, 'processed')
     })
     addToast('info', 'Geração interrompida.')
   }
 
   const handleRedoSelected = async () => {
-    const targets = reviewable.filter((p) => selected.includes(p.id))
+    const targets = reviewable.filter((p) => selected.includes(p._key || p.id))
     if (!targets.length) { addToast('warning', 'Selecione ao menos um produto.'); return }
-    const fieldsMap = Object.fromEntries(targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))]))
+    const fieldsMap = Object.fromEntries(targets.map((p) => [p._key || p.id, getActiveFields(getFieldSelFor(p._key || p.id))]))
 
     cancelProcessRef.current = false
-    targets.forEach((p) => updateProductStatus(p.id, 'processing'))
+    targets.forEach((p) => updateProductStatus(p._key || p.id, 'processing'))
     setProcessing(true)
     setProgress(0, targets.length)
 
@@ -346,16 +351,17 @@ export default function ReviewPanel() {
       targets,
       AI_CONCURRENCY,
       async (p) => {
-        if (cancelProcessRef.current) { updateProductStatus(p.id, 'processed'); return }
-        const fields = fieldsMap[p.id]
+        const itemKey = p._key || p.id
+        if (cancelProcessRef.current) { updateProductStatus(itemKey, 'processed'); return }
+        const fields = fieldsMap[itemKey]
         if (!fields?.length) return
         try {
           const results = await processProductsWithAI([p], fields)
-          if (cancelProcessRef.current) { updateProductStatus(p.id, 'processed'); return }
+          if (cancelProcessRef.current) { updateProductStatus(itemKey, 'processed'); return }
           const r = results[0]
-          if (r.error) updateProductStatus(r.id, 'error')
+          if (r.error) updateProductStatus(r.id || itemKey, 'error')
           else {
-            updateProductResult(r.id,
+            updateProductResult(r.id || itemKey,
               fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
               fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
               r.titleGenerationId ?? p.titleGenerationId,
@@ -374,7 +380,7 @@ export default function ReviewPanel() {
             if (violations.length > 0) needAttention++
           }
         } catch (e) {
-          if (!cancelProcessRef.current) updateProductStatus(p.id, 'error')
+          if (!cancelProcessRef.current) updateProductStatus(itemKey, 'error')
         }
       },
       (done, total) => { if (!cancelProcessRef.current) setProgress(done, total) },
@@ -405,7 +411,7 @@ export default function ReviewPanel() {
    * estado local para os itens mostrarem o selo.
    */
   const handleApproveAndPublish = async () => {
-    const allTargets = reviewable.filter((p) => selected.includes(p.id) && p.status === 'processed')
+    const allTargets = reviewable.filter((p) => selected.includes(p._key || p.id) && p.status === 'processed')
     if (!allTargets.length) { addToast('info', 'Nenhum produto pronto para publicar entre os selecionados.'); return }
 
     const token = activeClient?.anymarket_token || config.gumgaToken
@@ -426,14 +432,15 @@ export default function ReviewPanel() {
 
   const executeApply = async (targets) => {
     if (!targets.length) return
-    const fieldsMap = Object.fromEntries(targets.map((p) => [p.id, getActiveFields(getFieldSelFor(p.id))]))
-    targets.forEach((p) => updateProductStatus(p.id, 'applying'))
+    const fieldsMap = Object.fromEntries(targets.map((p) => [p._key || p.id, getActiveFields(getFieldSelFor(p._key || p.id))]))
+    targets.forEach((p) => updateProductStatus(p._key || p.id, 'applying'))
     setApplying(true)
     setProgress(0, targets.length)
     const token = activeClient?.anymarket_token || config.gumgaToken
 
     await parallelProcess(targets, PATCH_CONCURRENCY, async (p) => {
-      const fields = fieldsMap[p.id]
+      const itemKey = p._key || p.id
+      const fields = fieldsMap[itemKey]
       const genIds = []
       if (p.titleGenerationId) genIds.push(p.titleGenerationId)
       if (p.descGenerationId) genIds.push(p.descGenerationId)
@@ -458,7 +465,7 @@ export default function ReviewPanel() {
         if (fields.includes('title'))       changes.push({ field: 'TITULO',    before: p.title,       after: p.newTitle })
         if (fields.includes('description')) changes.push({ field: 'DESCRIÇÃO', before: p.description, after: p.newDescription })
         addLog({ logId: uuidv4(), productId: p.id, productTitle: p.newTitle ?? p.title, timestamp: new Date().toISOString(), status: 'applied', changes, originalData: { title: p.title, description: p.description } })
-      } catch (e) { updateProductStatus(p.id, 'error'); addToast('error', `Erro ${p.id}: ` + e.message) }
+      } catch (e) { updateProductStatus(p._key || p.id, 'error'); addToast('error', `Erro ${p.id}: ` + e.message) }
     }, (done, total) => setProgress(done, total))
     setApplying(false)
 
@@ -473,7 +480,7 @@ export default function ReviewPanel() {
     const state = useStore.getState()
     const currentProducts = state.products
     setSelectedIds(state.ui.selectedIds.filter((id) => {
-      const p = currentProducts.find((x) => x.id === id)
+      const p = currentProducts.find((x) => (x._key || x.id) === id || x.id === id)
       return p && p.status !== 'applied'
     }))
     const stillPending = currentProducts.filter((p) => ['processed', 'error'].includes(p.status))
@@ -499,7 +506,7 @@ export default function ReviewPanel() {
   }
 
   // ── Teclado ────────────────────────────────────────────────────────────
-  const reviewableIds = useMemo(() => reviewable.map((p) => p.id), [reviewable])
+  const reviewableIds = useMemo(() => reviewable.map((p) => p._key || p.id), [reviewable])
 
   useEffect(() => {
     const onKey = (e) => {
@@ -704,31 +711,34 @@ export default function ReviewPanel() {
 
       {/* ── Fila ───────────────────────────────────────────────────────── */}
       <Panel>
-        {reviewable.map((p, idx) => (
-          <div key={p.id} ref={(el) => { rowRefs.current[p.id] = el }}>
-            <ReviewProductRow
-              product={p}
-              isSelected={selected.includes(p.id)}
-              isExpanded={Boolean(expanded[p.id])}
-              isFocused={focusIdx === idx}
-              fieldSel={getFieldSelFor(p.id)}
-              titleFeedback={p.titleGenerationId ? feedbackState[p.titleGenerationId] : null}
-              descFeedback={p.descGenerationId ? feedbackState[p.descGenerationId] : null}
-              descView={descView[p.id] ?? 'preview'}
-              categoryEnabled={categoryEnabled}
-              isLoading={isLoading}
-              onToggleSelect={() => { toggleSelectId(p.id); setFocusIdx(idx) }}
-              onToggleExpand={() => { toggleExpand(p.id); setFocusIdx(idx) }}
-              onToggleField={(field) => toggleFieldSel(p.id, field)}
-              onSetDescView={setDescViewFor}
-              onEditTitle={handleEditTitle}
-              onEditDescription={handleEditDescription}
-              onFeedback={handleSingleFeedback}
-              onRedo={handleRedoSingle}
-              onCategory={setCategoryProduct}
-            />
-          </div>
-        ))}
+        {reviewable.map((p, idx) => {
+          const itemKey = p._key || p.id
+          return (
+            <div key={itemKey} ref={(el) => { rowRefs.current[itemKey] = el }}>
+              <ReviewProductRow
+                product={p}
+                isSelected={selected.includes(itemKey)}
+                isExpanded={Boolean(expanded[itemKey])}
+                isFocused={focusIdx === idx}
+                fieldSel={getFieldSelFor(itemKey)}
+                titleFeedback={p.titleGenerationId ? feedbackState[p.titleGenerationId] : null}
+                descFeedback={p.descGenerationId ? feedbackState[p.descGenerationId] : null}
+                descView={descView[itemKey] ?? 'preview'}
+                categoryEnabled={categoryEnabled}
+                isLoading={isLoading}
+                onToggleSelect={() => { toggleSelectId(itemKey); setFocusIdx(idx) }}
+                onToggleExpand={() => { toggleExpand(itemKey); setFocusIdx(idx) }}
+                onToggleField={(field) => toggleFieldSel(itemKey, field)}
+                onSetDescView={setDescViewFor}
+                onEditTitle={(val) => handleEditTitle(itemKey, val)}
+                onEditDescription={(val) => handleEditDescription(itemKey, val)}
+                onFeedback={handleSingleFeedback}
+                onRedo={handleRedoSingle}
+                onCategory={setCategoryProduct}
+              />
+            </div>
+          )
+        })}
       </Panel>
 
       {/* ── Produtos bloqueados ────────────────────────────────────────── */}

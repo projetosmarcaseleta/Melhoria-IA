@@ -105,12 +105,12 @@ export default function ProductTable() {
     }
 
     const targets = products.filter((p) =>
-      (ui.selectedIds.length ? ui.selectedIds.includes(p.id) : true) && p.status === 'idle'
+      (ui.selectedIds.length ? ui.selectedIds.includes(p._key || p.id) : true) && p.status === 'idle'
     )
     if (!targets.length) { addToast('info', 'Nenhum produto pronto para gerar no momento.'); return }
 
     cancelProcessRef.current = false
-    targets.forEach((p) => updateProductStatus(p.id, 'processing'))
+    targets.forEach((p) => updateProductStatus(p._key || p.id, 'processing'))
     setProcessing(true)
     setProgress(0, targets.length)
 
@@ -121,16 +121,17 @@ export default function ProductTable() {
       targets,
       AI_CONCURRENCY,
       async (p) => {
-        if (cancelProcessRef.current) { updateProductStatus(p.id, 'idle'); return }
+        const itemKey = p._key || p.id
+        if (cancelProcessRef.current) { updateProductStatus(itemKey, 'idle'); return }
         try {
           const results = await processProductsWithAI([p], fields)
-          if (cancelProcessRef.current) { updateProductStatus(p.id, 'idle'); return }
+          if (cancelProcessRef.current) { updateProductStatus(itemKey, 'idle'); return }
           const r = results[0]
           if (r.error) {
-            updateProductStatus(r.id, 'error')
+            updateProductStatus(r.id || itemKey, 'error')
           } else {
             updateProductResult(
-              r.id,
+              r.id || itemKey,
               fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
               fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
               r.titleGenerationId ?? p.titleGenerationId,
@@ -150,7 +151,7 @@ export default function ProductTable() {
           }
         } catch (e) {
           if (!cancelProcessRef.current) {
-            updateProductStatus(p.id, 'error')
+            updateProductStatus(itemKey, 'error')
             addToast('error', `Erro produto ${p.id}: ` + e.message)
           }
         }
@@ -190,8 +191,8 @@ export default function ProductTable() {
     return matchStatus && matchSearch
   })
 
-  const allSelected = filtered.length > 0 && filtered.every((p) => ui.selectedIds.includes(p.id))
-  const toggleAll = () => (allSelected ? clearSelection() : setSelectedIds(filtered.map((p) => p.id)))
+  const allSelected = filtered.length > 0 && filtered.every((p) => ui.selectedIds.includes(p._key || p.id))
+  const toggleAll = () => (allSelected ? clearSelection() : setSelectedIds(filtered.map((p) => p._key || p.id)))
   const isLoading = ui.isProcessing || ui.isFetchingWebhook || ui.isApplying
   const showLoader = loaderOpen || products.length === 0
   const pendingCount = products.filter((p) => p.status === 'idle').length
@@ -430,20 +431,21 @@ export default function ProductTable() {
                   </tr>
                 ) : (
                   filtered.map((p) => {
+                    const itemKey = p._key || (p.idSku ? `${p.id}-${p.idSku}` : p.id)
                     const st = statusOf(p)
                     const motivo = blockReason(p)
-                    const isRowSelected = ui.selectedIds.includes(p.id)
+                    const isRowSelected = ui.selectedIds.includes(itemKey)
 
                     return (
                       <tr
-                        key={p.id + '-' + p.idSku}
+                        key={itemKey}
                         className={`transition-colors ${isRowSelected ? 'bg-indigo-500/[0.08]' : 'hover:bg-slate-950/40'}`}
                       >
                         <td className="py-2.5 pl-4 pr-2">
                           <input
                             type="checkbox"
                             checked={isRowSelected}
-                            onChange={() => toggleSelectId(p.id)}
+                            onChange={() => toggleSelectId(itemKey)}
                             aria-label={`Selecionar produto ${p.id}`}
                             className="w-4 h-4 rounded border-slate-700 bg-slate-950 accent-indigo-600 cursor-pointer align-middle"
                           />
