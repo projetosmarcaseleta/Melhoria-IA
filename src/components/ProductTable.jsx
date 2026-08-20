@@ -15,7 +15,8 @@ import { processProductsWithAI } from '../services/aiService'
 import { parallelProcess } from '../utils/batchUtils'
 import { playCompletionSound, showBrowserNotification } from '../utils/notificationUtils'
 
-const CONCURRENCY = 10
+// Tier 3 da OpenAI suporta com folga 25 workers simultâneos de IA (~1.000 RPM no pico vs teto de 5.000 RPM)
+const AI_CONCURRENCY = 25
 
 // Reexportado porque a regra vivia neste arquivo e outros módulos importavam
 // daqui; a implementação agora é única, em ui/productTokens.js.
@@ -118,7 +119,7 @@ export default function ProductTable() {
 
     await parallelProcess(
       targets,
-      CONCURRENCY,
+      AI_CONCURRENCY,
       async (p) => {
         if (cancelProcessRef.current) { updateProductStatus(p.id, 'idle'); return }
         try {

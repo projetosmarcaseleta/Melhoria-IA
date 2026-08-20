@@ -18,9 +18,11 @@ import PipelineWizard from './PipelineWizard'
 import { fetchCategoryConfig } from '../services/categoryService'
 import { v4 as uuidv4 } from 'uuid'
 
-const CONCURRENCY = 10
+// Tier 3 da OpenAI suporta com folga 25 workers simultâneos de IA (~1.000 RPM no pico vs teto de 5.000 RPM)
+const AI_CONCURRENCY = 25
+// Envio ao AnyMarket mantido em 10 para evitar throttling do ERP/Marketplace
+const PATCH_CONCURRENCY = 10
 // Espera antes de mandar o feedback 'edited' para o backend. Antes cada tecla
-// digitada no título ou na descrição disparava uma chamada de rede.
 const FEEDBACK_DEBOUNCE_MS = 700
 
 function getActiveFields(sel) {
@@ -342,7 +344,7 @@ export default function ReviewPanel() {
 
     await parallelProcess(
       targets,
-      CONCURRENCY,
+      AI_CONCURRENCY,
       async (p) => {
         if (cancelProcessRef.current) { updateProductStatus(p.id, 'processed'); return }
         const fields = fieldsMap[p.id]
@@ -430,7 +432,7 @@ export default function ReviewPanel() {
     setProgress(0, targets.length)
     const token = activeClient?.anymarket_token || config.gumgaToken
 
-    await parallelProcess(targets, CONCURRENCY, async (p) => {
+    await parallelProcess(targets, PATCH_CONCURRENCY, async (p) => {
       const fields = fieldsMap[p.id]
       const genIds = []
       if (p.titleGenerationId) genIds.push(p.titleGenerationId)
