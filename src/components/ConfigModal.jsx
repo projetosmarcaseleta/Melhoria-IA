@@ -237,20 +237,13 @@ export default function ConfigModal() {
         }
       }
 
-      // 3. Salvar prompts no backend se em modo customizado e tiver permissão.
-      //
-      // As duas caixas vazias significam "sem personalização" — o cliente fica só com o
-      // núcleo do sistema, que é o comportamento correto e não precisa gravar nada. Sem
-      // esta guarda, salvar sem escrever nada devolvia 400 do backend ("informe titulo ou
-      // descricao") justamente no primeiro contato de um cliente novo com a tela.
-      const temPersonalizacao = customPrompts.titulo?.trim() || customPrompts.descricao?.trim()
-
-      if (activeClient?.id && form.promptMode === 'custom' && canEditPrompt && temPersonalizacao) {
+      // 3. Salvar prompts no backend (permite tanto gravar personalização quanto apagar)
+      if (activeClient?.id && canEditPrompt) {
         await apiClient.put(
           `/api/prompts/${activeClient.id}`,
           {
-            titulo: customPrompts.titulo,
-            descricao: customPrompts.descricao,
+            titulo: customPrompts.titulo ?? '',
+            descricao: customPrompts.descricao ?? '',
             promptModeTitulo: promptModes.titulo,
             promptModeDescricao: promptModes.descricao,
           }

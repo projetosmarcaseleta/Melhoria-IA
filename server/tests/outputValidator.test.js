@@ -21,6 +21,17 @@ describe('outputValidator & deterministic transformations', () => {
     assert.equal(result, 'Açucareiro Esmaltado Porta Açúcar com Suporte para Café')
   })
 
+  it('toTitleCase deve preservar e formatar unidades de medida e siglas em MAIÚSCULAS', () => {
+    const title = 'smartwatch apple watch series 11 gps 46mm pulseira preta'
+    assert.equal(toTitleCase(title), 'Smartwatch Apple Watch Series 11 GPS 46MM Pulseira Preta')
+
+    const techTitle = 'cabo usb tipo c 2m 20w carregamento rapido 110v 220v'
+    assert.equal(toTitleCase(techTitle), 'Cabo USB Tipo C 2M 20W Carregamento Rapido 110V 220V')
+
+    const drinkTitle = 'garrafa termica inox 500ml 1l com isolamento 10kg'
+    assert.equal(toTitleCase(drinkTitle), 'Garrafa Termica Inox 500ML 1L com Isolamento 10KG')
+  })
+
   it('enforceMaxLength deve cortar deterministicamente por palavra inteira sem estourar o limite', () => {
     const longTitle = 'Conjunto Panelas Cerâmica Antiaderente Indução Tramontina Vermelho 5 Peças'
     const truncated = enforceMaxLength(longTitle, 60)

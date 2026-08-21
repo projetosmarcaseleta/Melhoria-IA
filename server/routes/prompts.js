@@ -308,7 +308,7 @@ router.put('/:clientId', async (req, res, next) => {
       descricao: promptModeDescricao === 'replace' ? 'replace' : 'append',
     }
 
-    if (!titulo && !descricao) {
+    if (titulo === undefined && descricao === undefined) {
       return res.status(400).json({
         error: 'Pelo menos um dos campos "titulo" ou "descricao" é obrigatório.',
       })
@@ -316,8 +316,8 @@ router.put('/:clientId', async (req, res, next) => {
 
     // Se for o cliente de teste, salva direto sem exigir role admin
     if (isTestClient(clientId)) {
-      if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
-      if (descricao) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
+      if (titulo !== undefined) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
+      if (descricao !== undefined) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
       return res.json({ ok: true, message: 'Prompts de teste atualizados com sucesso.' })
     }
 
@@ -332,8 +332,8 @@ router.put('/:clientId', async (req, res, next) => {
       const clientDoc = await clientRef.get()
 
       if (!clientDoc.exists) {
-        if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
-        if (descricao) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
+        if (titulo !== undefined) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
+        if (descricao !== undefined) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
         return res.json({ ok: true, message: 'Prompts atualizados com sucesso.' })
       }
 
@@ -344,7 +344,7 @@ router.put('/:clientId', async (req, res, next) => {
         ['titulo', titulo],
         ['descricao', descricao],
       ]) {
-        if (!novoConteudo) continue
+        if (novoConteudo === undefined) continue
 
         const ref = clientRef.collection('prompts').doc(type)
         const atual = await ref.get()
@@ -363,18 +363,20 @@ router.put('/:clientId', async (req, res, next) => {
           })
         }
 
+        const isContentEmpty = !novoConteudo || !String(novoConteudo).trim()
+
         batch.set(ref, {
-          content: novoConteudo,
+          content: isContentEmpty ? '' : novoConteudo,
           promptMode: modos[type],
           version: versaoAtual + 1,
-          isActive: true,
+          isActive: !isContentEmpty,
           createdBy: req.user.id,
           createdByName: req.user.name ?? null,
           createdByRole: req.user.role ?? 'editor',
           updatedAt: FieldValue.serverTimestamp(),
         })
 
-        salvos.push({ type, version: versaoAtual + 1 })
+        salvos.push({ type, version: versaoAtual + 1, cleared: isContentEmpty })
       }
 
       await batch.commit()
@@ -383,8 +385,8 @@ router.put('/:clientId', async (req, res, next) => {
       )
     } catch (dbErr) {
       console.warn('[PromptsPut] Aviso Firestore (salvando em mock):', dbErr.message)
-      if (titulo) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
-      if (descricao) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
+      if (titulo !== undefined) saveMockPrompt(clientId, 'titulo', titulo, req.user?.id)
+      if (descricao !== undefined) saveMockPrompt(clientId, 'descricao', descricao, req.user?.id)
     }
 
     // Invalidar cache do cliente
