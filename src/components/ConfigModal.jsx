@@ -115,6 +115,7 @@ export default function ConfigModal() {
   const [form, setForm] = useState({
     ...config,
     anymarketToken: activeClient?.anymarket_token ?? config.gumgaToken ?? '',
+    anymarketPanelToken: activeClient?.anymarket_panel_token ?? '',
     promptMode: config.promptMode || 'default',
   })
 
@@ -171,6 +172,13 @@ export default function ConfigModal() {
   }
 
   useEffect(() => {
+    if (activeClient) {
+      setForm((prev) => ({
+        ...prev,
+        anymarketToken: activeClient.anymarket_token ?? '',
+        anymarketPanelToken: activeClient.anymarket_panel_token ?? '',
+      }))
+    }
     carregarPrompts()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeClient?.id])
@@ -300,26 +308,51 @@ export default function ConfigModal() {
         {/* Modal Scrollable Body */}
         <div className="px-6 py-6 space-y-6 overflow-y-auto flex-1">
           
-          {/* Seção 1: Token AnyMarket */}
-          <div className="space-y-3 bg-slate-950/80 p-4 rounded-xl border border-slate-800">
-            <div className="flex items-center gap-2.5">
-              <span className="text-lg">🔑</span>
-              <div>
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Token AnyMarket (gumgaToken)
-                </h3>
-                <p className="text-xs text-slate-300">
-                  Chave de autenticação exclusiva para sincronização com o marketplace.
-                </p>
+          {/* Seção 1: Tokens AnyMarket */}
+          <div className="space-y-4 bg-slate-950/80 p-4 rounded-xl border border-slate-800">
+            {/* Token da API (gumgaToken) */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2.5">
+                <span className="text-lg">🔑</span>
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Token AnyMarket (gumgaToken)
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    Chave de autenticação pública para sincronização de produtos com o marketplace.
+                  </p>
+                </div>
               </div>
+              <input
+                type="password"
+                value={form.anymarketToken}
+                onChange={(e) => setForm({ ...form, anymarketToken: e.target.value })}
+                placeholder="Cole o gumgaToken do cliente..."
+                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700/70 rounded-xl text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
+              />
             </div>
-            <input
-              type="password"
-              value={form.anymarketToken}
-              onChange={(e) => setForm({ ...form, anymarketToken: e.target.value })}
-              placeholder="Cole o gumgaToken do cliente..."
-              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700/70 rounded-xl text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
-            />
+
+            {/* Token de Sessão do Painel */}
+            <div className="space-y-2 pt-3 border-t border-slate-800/80">
+              <div className="flex items-center gap-2.5">
+                <span className="text-lg">🛡️</span>
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Token de Sessão do Painel AnyMarket (Session Token)
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    Token de sessão do painel da AnyMarket, necessário para recursos avançados como vínculos de canais e categorias.
+                  </p>
+                </div>
+              </div>
+              <input
+                type="password"
+                value={form.anymarketPanelToken}
+                onChange={(e) => setForm({ ...form, anymarketPanelToken: e.target.value })}
+                placeholder="Cole o token de sessão do painel (Bearer...)..."
+                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700/70 rounded-xl text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
+              />
+            </div>
           </div>
 
           {/* Seção 2: Controles de Processamento */}
