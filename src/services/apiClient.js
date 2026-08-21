@@ -2,7 +2,9 @@ import axios from 'axios'
 import { auth } from './firebaseClient'
 import useStore from '../store/useStore'
 
-const API_BASE = import.meta.env.VITE_API_URL || ''
+// Exportado porque a geração em stream usa `fetch` direto (axios não entrega resposta
+// parcial no navegador) e precisa montar a URL do mesmo jeito que o axios monta.
+export const API_BASE = import.meta.env.VITE_API_URL || ''
 
 /**
  * Obtém o Firebase ID Token atualizado dinamicamente.

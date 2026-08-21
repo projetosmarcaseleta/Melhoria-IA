@@ -11,12 +11,20 @@ import {
 } from './ui/productTokens'
 import { parseIdsFromExcel } from '../services/excelService'
 import { fetchProductsFromWebhook } from '../services/webhookService'
-import { processProductsWithAI } from '../services/aiService'
-import { parallelProcess } from '../utils/batchUtils'
+import { processProductsWithAIStream, payloadIdOf } from '../services/aiService'
+import { parallelProcess, chunk } from '../utils/batchUtils'
 import { playCompletionSound, showBrowserNotification } from '../utils/notificationUtils'
 
-// Tier 3 da OpenAI suporta 50 workers simultâneos de IA (~1.500 RPM no pico vs teto de 5.000 RPM)
-const AI_CONCURRENCY = 50
+// Antes: 50 workers, cada um com uma requisição de UM produto. O navegador limita ~6
+// conexões por origem em HTTP/1.1, então na prática eram ~6 gerações em voo e 44 workers
+// parados na fila do browser — aumentar o número não mudava nada.
+//
+// Agora cada requisição leva um LOTE de produtos e quem decide a concorrência real é o
+// servidor (llmLimiter, que se ajusta pelos headers de cota da OpenAI). 6 × 8 = 48 produtos
+// realmente em voo, e o resultado volta em stream para o progresso continuar produto a
+// produto em vez de saltar de lote em lote.
+const REQUEST_CONCURRENCY = 6
+const PRODUCTS_PER_REQUEST = 8
 const PAGE_SIZE = 50
 
 // Reexportado porque a regra vivia neste arquivo e outros módulos importavam
@@ -49,10 +57,14 @@ export default function ProductTable() {
   const [fileRef, setFileRef] = useState(null)
   const [loaderOpen, setLoaderOpen] = useState(false)
   const cancelProcessRef = useState({ current: false })[0]
+  // Abortar o fetch não é cosmético: sem isso o servidor segue gerando (e queimando cota da
+  // OpenAI) os produtos do lote que ninguém mais vai receber.
+  const abortRef = useState({ current: null })[0]
 
   // ── Cancelar geração ────────────────────────────────────────────────────
   const handleCancelAI = () => {
     cancelProcessRef.current = true
+    abortRef.current?.abort()
     setProcessing(false)
     useStore.getState().products.forEach((p) => {
       if (p.status === 'processing') updateProductStatus(p.id, 'idle')
@@ -112,53 +124,86 @@ export default function ProductTable() {
     if (!targets.length) { addToast('info', 'Nenhum produto pronto para gerar no momento.'); return }
 
     cancelProcessRef.current = false
+    abortRef.current = new AbortController()
     targets.forEach((p) => updateProductStatus(p._key || p.id, 'processing'))
     setProcessing(true)
     setProgress(0, targets.length)
 
     // Quantos anúncios saíram com alguma violação de regra do cliente
     let needAttention = 0
+    // Progresso é contado por PRODUTO, no callback do stream — não por lote concluído.
+    let concluidos = 0
 
     await parallelProcess(
-      targets,
-      AI_CONCURRENCY,
-      async (p) => {
-        const itemKey = p._key || p.id
-        if (cancelProcessRef.current) { updateProductStatus(itemKey, 'idle'); return }
+      chunk(targets, PRODUCTS_PER_REQUEST),
+      REQUEST_CONCURRENCY,
+      async (lote) => {
+        if (cancelProcessRef.current) {
+          lote.forEach((p) => updateProductStatus(p._key || p.id, 'idle'))
+          return
+        }
+
+        // Casar resultado com produto por ID, nunca por posição: o stream devolve na ordem
+        // em que cada um fica pronto. Por índice, a descrição de um produto acabaria salva
+        // em outro. Quem sobra no mapa no fim é quem não voltou.
+        const pendentes = new Map(lote.map((p) => [payloadIdOf(p), p]))
+
         try {
-          const results = await processProductsWithAI([p], fields)
-          if (cancelProcessRef.current) { updateProductStatus(itemKey, 'idle'); return }
-          const r = results[0]
-          if (r.error) {
-            updateProductStatus(r.id || itemKey, 'error')
-          } else {
-            updateProductResult(
-              r.id || itemKey,
-              fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
-              fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
-              r.titleGenerationId ?? p.titleGenerationId,
-              r.descGenerationId ?? p.descGenerationId,
-              {
-                titleValidation: r.titleValidation,
-                descValidation: r.descValidation,
-                titleRulesApplied: r.titleRulesApplied,
-                descRulesApplied: r.descRulesApplied,
+          await processProductsWithAIStream(
+            lote,
+            fields,
+            (r) => {
+              if (cancelProcessRef.current) return
+
+              const p = pendentes.get(r.id)
+              if (!p) return
+              pendentes.delete(r.id)
+
+              const itemKey = p._key || p.id
+              concluidos++
+              setProgress(concluidos, targets.length)
+
+              if (r.error) {
+                updateProductStatus(itemKey, 'error')
+                return
               }
-            )
-            const violations = [
-              ...(r.titleValidation?.violations ?? []),
-              ...(r.descValidation?.violations ?? []),
-            ]
-            if (violations.length > 0) needAttention++
-          }
+
+              updateProductResult(
+                itemKey,
+                fields.includes('title') ? (r.newTitle ?? p.newTitle ?? '') : (p.newTitle ?? ''),
+                fields.includes('description') ? (r.newDescription ?? p.newDescription ?? '') : (p.newDescription ?? ''),
+                r.titleGenerationId ?? p.titleGenerationId,
+                r.descGenerationId ?? p.descGenerationId,
+                {
+                  titleValidation: r.titleValidation,
+                  descValidation: r.descValidation,
+                  titleRulesApplied: r.titleRulesApplied,
+                  descRulesApplied: r.descRulesApplied,
+                }
+              )
+              const violations = [
+                ...(r.titleValidation?.violations ?? []),
+                ...(r.descValidation?.violations ?? []),
+              ]
+              if (violations.length > 0) needAttention++
+            },
+            { signal: abortRef.current.signal }
+          )
+
+          // Produto que não voltou no stream (conexão caiu no meio do lote) não pode ficar
+          // preso em 'processing' para sempre.
+          pendentes.forEach((p) => updateProductStatus(p._key || p.id, cancelProcessRef.current ? 'idle' : 'error'))
         } catch (e) {
-          if (!cancelProcessRef.current) {
-            updateProductStatus(itemKey, 'error')
-            addToast('error', `Erro produto ${p.id}: ` + e.message)
+          if (cancelProcessRef.current) {
+            pendentes.forEach((p) => updateProductStatus(p._key || p.id, 'idle'))
+            return
           }
+          const perdidos = pendentes.size
+          pendentes.forEach((p) => updateProductStatus(p._key || p.id, 'error'))
+          addToast('error', `Erro em ${perdidos} produto(s) do lote: ` + e.message)
         }
       },
-      (done, total) => { if (!cancelProcessRef.current) setProgress(done, total) },
+      undefined,
       () => cancelProcessRef.current
     )
 

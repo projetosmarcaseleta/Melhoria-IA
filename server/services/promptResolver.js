@@ -23,12 +23,16 @@ import { firestoreMeter } from './firestoreMeter.js'
  * 6. Enriquece com instruções de skills ativas
  */
 export async function resolvePrompt(clientId, promptType, productData = null) {
-  // Verificar cache em memória
-  const cached = promptCache.get(clientId, promptType)
-  if (cached) {
-    return cached
-  }
+  // O cache resolve por (clientId, promptType) com single-flight: ver getOrCreate().
+  //
+  // `productData` NÃO participa da resolução — nenhum campo do produto entra no prompt
+  // final, que é montado só a partir de dados do cliente. O parâmetro fica por
+  // compatibilidade com os chamadores existentes. É justamente isso que permite resolver
+  // uma vez por requisição e reusar em todos os produtos do lote.
+  return promptCache.getOrCreate(clientId, promptType, () => resolvePromptUncached(clientId, promptType))
+}
 
+async function resolvePromptUncached(clientId, promptType) {
   const isMock = isTestClient(clientId)
 
   // 1. Buscar prompt customizado do cliente
@@ -352,9 +356,8 @@ export async function resolvePrompt(clientId, promptType, productData = null) {
     approvedRules,
   }
 
-  // Armazenar no cache em memória
-  promptCache.set(clientId, promptType, resolvedResult)
-
+  // Quem grava no cache é getOrCreate(), depois de checar que nenhuma invalidação
+  // aconteceu enquanto esta resolução estava em voo.
   return resolvedResult
 }
 

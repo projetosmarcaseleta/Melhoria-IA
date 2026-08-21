@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { llmLimiter, isRateLimitError } from './llmLimiter.js'
 
 let client = null
 function getClient() {
@@ -6,6 +7,31 @@ function getClient() {
     client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'test-key' })
   }
   return client
+}
+
+/**
+ * Único ponto de saída para a API de chat da OpenAI.
+ *
+ * Toda chamada passa pelo `llmLimiter`, que é global ao processo: o teto de concorrência
+ * vale para o conjunto das requisições HTTP em andamento, não por requisição. É isso que
+ * permite o navegador mandar lotes sem precisar adivinhar o limite da conta.
+ *
+ * `withResponse()` é usado em vez do retorno direto porque os headers de rate limit só
+ * existem na resposta crua — e é deles que sai a decisão de subir ou descer o teto.
+ */
+async function createChatCompletion(params) {
+  await llmLimiter.acquire()
+
+  try {
+    const { data, response } = await getClient().chat.completions.create(params).withResponse()
+    llmLimiter.reportSuccess(response.headers)
+    return data
+  } catch (err) {
+    if (isRateLimitError(err)) llmLimiter.reportThrottle()
+    throw err
+  } finally {
+    llmLimiter.release()
+  }
 }
 
 /**
@@ -39,8 +65,7 @@ export async function generateWithLLM({
     .filter(Boolean)
     .join('\n\n')
 
-  const openai = getClient()
-  const response = await openai.chat.completions.create({
+  const response = await createChatCompletion({
     model,
     temperature,
     messages: [
@@ -75,9 +100,9 @@ export async function generateStructured({
   model = 'gpt-4o-mini',
   temperature = 0.1,
 }) {
-  const openai = getClient()
-
-  const response = await openai.chat.completions.create({
+  // Mesmo limitador do caminho de título/descrição: a cota é da MESMA conta, então
+  // classificar categoria e gerar anúncio competem pelo mesmo teto.
+  const response = await createChatCompletion({
     model,
     temperature,
     messages: [

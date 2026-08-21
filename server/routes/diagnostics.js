@@ -15,6 +15,8 @@ import { operatorCache } from '../middleware/auth.js'
 import { promptCache } from '../services/promptCache.js'
 import { categoryTreeCache } from '../services/categoryTreeCache.js'
 import { getPacing } from '../services/anymarketClient.js'
+import { getLlmPacing } from '../services/llmLimiter.js'
+import { getGenerationPersistenceStats } from './generate.js'
 
 const router = Router()
 
@@ -35,6 +37,13 @@ router.get('/', (_req, res) => {
       arvoreCategorias: categoryTreeCache.stats(),
     },
     anymarket: { ritmo: getPacing() },
+    // Concorrência real das chamadas ao LLM (adaptativa) e escritas de geração perdidas.
+    // `falhasDefinitivas > 0` significa texto entregue ao operador que não está no
+    // Firestore: o feedback dele vai para a memória do processo e some no restart.
+    llm: {
+      ritmo: getLlmPacing(),
+      persistencia: getGenerationPersistenceStats(),
+    },
     processo: {
       uptimeSegundos: Math.round(process.uptime()),
       memoriaMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
