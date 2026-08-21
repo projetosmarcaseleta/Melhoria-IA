@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import useStore from '../store/useStore'
 import FileUpload from './FileUpload'
 import ProcessingBar from './ProcessingBar'
