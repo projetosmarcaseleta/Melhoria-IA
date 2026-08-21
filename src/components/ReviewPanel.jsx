@@ -18,12 +18,13 @@ import PipelineWizard from './PipelineWizard'
 import { fetchCategoryConfig } from '../services/categoryService'
 import { v4 as uuidv4 } from 'uuid'
 
-// Tier 3 da OpenAI suporta com folga 25 workers simultâneos de IA (~1.000 RPM no pico vs teto de 5.000 RPM)
-const AI_CONCURRENCY = 25
+// Tier 3 da OpenAI suporta 50 workers simultâneos de IA (~1.500 RPM no pico vs teto de 5.000 RPM)
+const AI_CONCURRENCY = 50
 // Envio ao AnyMarket mantido em 10 para evitar throttling do ERP/Marketplace
 const PATCH_CONCURRENCY = 10
 // Espera antes de mandar o feedback 'edited' para o backend. Antes cada tecla
 const FEEDBACK_DEBOUNCE_MS = 700
+const PAGE_SIZE = 50
 
 function getActiveFields(sel) {
   const f = []
@@ -61,6 +62,7 @@ export default function ReviewPanel() {
   const [descView, setDescView]       = useState({})
   const [expanded, setExpanded]       = useState({})
   const [focusIdx, setFocusIdx]       = useState(-1)
+  const [page, setPage]               = useState(1)
   const [showBlockedBanner, setShowBlockedBanner] = useState(false)
   const [blockedProducts, setBlockedProducts]     = useState([])
   const [pendingTargets, setPendingTargets]       = useState([])
@@ -92,6 +94,9 @@ export default function ReviewPanel() {
   const reviewable = products.filter((p) =>
     ['processed', 'error', 'applying', 'processing'].includes(p.status) || (p.newTitle || p.newDescription)
   )
+
+  const totalPages = Math.ceil(reviewable.length / PAGE_SIZE) || 1
+  const paginatedReviewable = reviewable.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const isLoading     = ui.isProcessing || ui.isApplying
   const isAllSelected = reviewable.length > 0 && reviewable.every((p) => selected.includes(p._key || p.id))
@@ -711,23 +716,24 @@ export default function ReviewPanel() {
 
       {/* ── Fila ───────────────────────────────────────────────────────── */}
       <Panel>
-        {reviewable.map((p, idx) => {
+        {paginatedReviewable.map((p, idx) => {
           const itemKey = p._key || p.id
+          const globalIdx = (page - 1) * PAGE_SIZE + idx
           return (
             <div key={itemKey} ref={(el) => { rowRefs.current[itemKey] = el }}>
               <ReviewProductRow
                 product={p}
                 isSelected={selected.includes(itemKey)}
                 isExpanded={Boolean(expanded[itemKey])}
-                isFocused={focusIdx === idx}
+                isFocused={focusIdx === globalIdx}
                 fieldSel={getFieldSelFor(itemKey)}
                 titleFeedback={p.titleGenerationId ? feedbackState[p.titleGenerationId] : null}
                 descFeedback={p.descGenerationId ? feedbackState[p.descGenerationId] : null}
                 descView={descView[itemKey] ?? 'preview'}
                 categoryEnabled={categoryEnabled}
                 isLoading={isLoading}
-                onToggleSelect={() => { toggleSelectId(itemKey); setFocusIdx(idx) }}
-                onToggleExpand={() => { toggleExpand(itemKey); setFocusIdx(idx) }}
+                onToggleSelect={() => { toggleSelectId(itemKey); setFocusIdx(globalIdx) }}
+                onToggleExpand={() => { toggleExpand(itemKey); setFocusIdx(globalIdx) }}
                 onToggleField={(field) => toggleFieldSel(itemKey, field)}
                 onSetDescView={setDescViewFor}
                 onEditTitle={(val) => handleEditTitle(itemKey, val)}
@@ -739,6 +745,25 @@ export default function ReviewPanel() {
             </div>
           )
         })}
+
+        {reviewable.length > PAGE_SIZE && (
+          <div className="px-4 py-2.5 bg-slate-950/40 border-t border-slate-800 flex items-center justify-between gap-3 flex-wrap text-[12px]">
+            <span className="text-slate-400">
+              Mostrando <strong className="text-slate-200">{(page - 1) * PAGE_SIZE + 1}</strong>–<strong className="text-slate-200">{Math.min(page * PAGE_SIZE, reviewable.length)}</strong> de <strong className="text-slate-200">{reviewable.length}</strong> produtos
+            </span>
+            <div className="flex items-center gap-1.5">
+              <Button size="sm" variant="ghost" icon="chevronLeft" disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                Anterior
+              </Button>
+              <span className="font-medium text-slate-300 px-2">
+                Página {page} de {totalPages}
+              </span>
+              <Button size="sm" variant="ghost" icon="chevronRight" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                Próxima
+              </Button>
+            </div>
+          </div>
+        )}
       </Panel>
 
       {/* ── Produtos bloqueados ────────────────────────────────────────── */}

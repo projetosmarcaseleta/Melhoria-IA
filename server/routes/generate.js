@@ -12,6 +12,35 @@ const router = Router()
 // em nome de categoria nova. Re-exportado aqui para não quebrar imports existentes.
 export { toTitleCase }
 
+const clientSettingsCache = new Map()
+const CLIENT_SETTINGS_TTL_MS = 60_000
+
+async function getCachedClientSettings(clientId) {
+  const hit = clientSettingsCache.get(clientId)
+  if (hit && Date.now() < hit.expiresAt) return hit.settings
+
+  let settings = {}
+  if (isTestClient(clientId)) {
+    const client = getMockClient(clientId)
+    settings = client.settings ?? {}
+  } else {
+    try {
+      const clientDoc = await db.collection('clients').doc(clientId).get()
+      if (clientDoc.exists) {
+        settings = clientDoc.data()?.settings ?? {}
+      } else {
+        settings = getMockClient(clientId).settings ?? {}
+      }
+    } catch (err) {
+      console.warn('[Generate] Aviso ao buscar cliente no Firestore:', err.message)
+      settings = getMockClient(clientId).settings ?? {}
+    }
+  }
+
+  clientSettingsCache.set(clientId, { settings, expiresAt: Date.now() + CLIENT_SETTINGS_TTL_MS })
+  return settings
+}
+
 /**
  * POST /api/generate
  * Body: {
@@ -32,24 +61,7 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: 'products deve ser um array não vazio.' })
     }
 
-    let settings = {}
-    if (isTestClient(clientId)) {
-      const client = getMockClient(clientId)
-      settings = client.settings ?? {}
-    } else {
-      try {
-        const clientDoc = await db.collection('clients').doc(clientId).get()
-        if (clientDoc.exists) {
-          settings = clientDoc.data()?.settings ?? {}
-        } else {
-          settings = getMockClient(clientId).settings ?? {}
-        }
-      } catch (err) {
-        console.warn('[Generate] Aviso ao buscar cliente no Firestore:', err.message)
-        settings = getMockClient(clientId).settings ?? {}
-      }
-    }
-
+    const settings = await getCachedClientSettings(clientId)
     const model = settings.model ?? 'gpt-4o-mini'
     const titleTemperature = settings.titleTemperature ?? (settings.temperature !== undefined ? Math.min(settings.temperature, 0.4) : 0.2)
     const descTemperature = settings.temperature ?? 0.4

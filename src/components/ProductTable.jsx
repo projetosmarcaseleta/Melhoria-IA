@@ -15,8 +15,9 @@ import { processProductsWithAI } from '../services/aiService'
 import { parallelProcess } from '../utils/batchUtils'
 import { playCompletionSound, showBrowserNotification } from '../utils/notificationUtils'
 
-// Tier 3 da OpenAI suporta com folga 25 workers simultâneos de IA (~1.000 RPM no pico vs teto de 5.000 RPM)
-const AI_CONCURRENCY = 25
+// Tier 3 da OpenAI suporta 50 workers simultâneos de IA (~1.500 RPM no pico vs teto de 5.000 RPM)
+const AI_CONCURRENCY = 50
+const PAGE_SIZE = 50
 
 // Reexportado porque a regra vivia neste arquivo e outros módulos importavam
 // daqui; a implementação agora é única, em ui/productTokens.js.
@@ -42,6 +43,7 @@ export default function ProductTable() {
 
   const [filterStatus, setFilterStatus] = useState('all')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [inputMode, setInputMode] = useState('manual')
   const [manualText, setManualText] = useState('')
   const [fileRef, setFileRef] = useState(null)
@@ -190,6 +192,11 @@ export default function ProductTable() {
     const matchSearch = !search || p.id.toLowerCase().includes(q) || (p.title ?? '').toLowerCase().includes(q)
     return matchStatus && matchSearch
   })
+
+  useEffect(() => { setPage(1) }, [search, filterStatus])
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const allSelected = filtered.length > 0 && filtered.every((p) => ui.selectedIds.includes(p._key || p.id))
   const toggleAll = () => (allSelected ? clearSelection() : setSelectedIds(filtered.map((p) => p._key || p.id)))
@@ -430,7 +437,7 @@ export default function ProductTable() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((p) => {
+                  paginated.map((p) => {
                     const itemKey = p._key || (p.idSku ? `${p.id}-${p.idSku}` : p.id)
                     const st = statusOf(p)
                     const motivo = blockReason(p)
@@ -481,6 +488,25 @@ export default function ProductTable() {
               </tbody>
             </table>
           </div>
+
+          {filtered.length > PAGE_SIZE && (
+            <div className="px-4 py-2.5 bg-slate-950/40 border-t border-slate-800 flex items-center justify-between gap-3 flex-wrap text-[12px]">
+              <span className="text-slate-400">
+                Mostrando <strong className="text-slate-200">{(page - 1) * PAGE_SIZE + 1}</strong>–<strong className="text-slate-200">{Math.min(page * PAGE_SIZE, filtered.length)}</strong> de <strong className="text-slate-200">{filtered.length}</strong> produtos
+              </span>
+              <div className="flex items-center gap-1.5">
+                <Button size="sm" variant="ghost" icon="chevronLeft" disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                  Anterior
+                </Button>
+                <span className="font-medium text-slate-300 px-2">
+                  Página {page} de {totalPages}
+                </span>
+                <Button size="sm" variant="ghost" icon="chevronRight" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                  Próxima
+                </Button>
+              </div>
+            </div>
+          )}
 
           {ui.selectedIds.length > 0 && (
             <div className="px-4 py-2 bg-slate-950/60 border-t border-slate-800 flex items-center justify-between gap-3 flex-wrap">
