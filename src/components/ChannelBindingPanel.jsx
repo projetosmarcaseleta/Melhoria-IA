@@ -8,6 +8,7 @@ import {
   fetchCategoryAttributes,
   fetchProductAttributeStatus,
   saveProductAttributes,
+  extractAttributesWithAI,
   proposeChannelBindings,
   applyChannelBindingsBatch,
 } from '../services/channelBindingService'
@@ -28,7 +29,7 @@ import {
  * como alternativa — e registra qual dos dois foi usado, para dar para medir depois
  * se as sugestões valem a pena.
  */
-export default function ChannelBindingPanel({ clientId, anymarketCategoryId, categoryPath = null, productId = null }) {
+export default function ChannelBindingPanel({ clientId, anymarketCategoryId, categoryPath = null, productId = null, product = null }) {
   const addToast = useStore((s) => s.addToast)
 
   const [status, setStatus] = useState(null)
@@ -125,14 +126,26 @@ export default function ChannelBindingPanel({ clientId, anymarketCategoryId, cat
           className="rounded-lg px-3 py-2.5 mb-3 text-[11px]"
           style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.35)', color: '#fbbf24' }}
         >
-          <p className="font-bold mb-1">O vínculo precisa ser feito no painel do AnyMarket</p>
-          <p className="text-slate-300">
-            {status.hubError?.message ??
-              'A API interna do painel não respondeu — o CRIA não consegue gravar o de-para por aqui.'}
-          </p>
-          <p className="text-slate-400 mt-1">
-            O estado abaixo é o <strong>último conhecido</strong> pelo CRIA, não uma conferência de agora.
-          </p>
+          {status.categoryNotFound ? (
+            <>
+              <p className="font-bold mb-1">⚠ Esta categoria não existe mais no AnyMarket</p>
+              <p className="text-slate-300">
+                A categoria atual do produto foi deletada do AnyMarket. O estado abaixo é o último conhecido pelo CRIA.
+                Abra o painel e mova o produto para uma categoria válida.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="font-bold mb-1">O vínculo precisa ser feito no painel do AnyMarket</p>
+              <p className="text-slate-300">
+                {status.hubError?.message ??
+                  'A API interna do painel não respondeu — o CRIA não consegue gravar o de-para por aqui.'}
+              </p>
+              <p className="text-slate-400 mt-1">
+                O estado abaixo é o <strong>último conhecido</strong> pelo CRIA, não uma conferência de agora.
+              </p>
+            </>
+          )}
           {status.panelUrl && (
             <a
               href={status.panelUrl}
@@ -261,6 +274,7 @@ export default function ChannelBindingPanel({ clientId, anymarketCategoryId, cat
           anymarketCategoryId={anymarketCategoryId}
           marketplace={canalAtributos}
           productId={productId}
+          product={product}
           onClose={() => setCanalAtributos(null)}
         />
       )}
@@ -517,13 +531,16 @@ function BindFlow({ clientId, anymarketCategoryId, marketplace, jaVinculado, onC
  * Com `productId`, mostra também o que falta preencher NESTE produto e permite
  * gravar. Sem produto, é só a lista do que o canal exige na categoria.
  */
-function AttributesStep({ clientId, anymarketCategoryId, marketplace, productId, onClose }) {
+function AttributesStep({ clientId, anymarketCategoryId, marketplace, productId, product = null, onClose }) {
   const addToast = useStore((s) => s.addToast)
 
   const [dados, setDados] = useState(null)
   const [valores, setValores] = useState({})
   const [preenchidos, setPreenchidos] = useState([])
   const [carregando, setCarregando] = useState(true)
+  const [carregandoValores, setCarregandoValores] = useState(false)
+  const [gerandoEscopo, setGerandoEscopo] = useState(null) // null | 'required' | 'optional' | 'all'
+  const [menuIAAberto, setMenuIAAberto] = useState(false)
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState(null)
   const [caveat, setCaveat] = useState(null)
@@ -538,23 +555,32 @@ function AttributesStep({ clientId, anymarketCategoryId, marketplace, productId,
         const atributos = await fetchCategoryAttributes(clientId, anymarketCategoryId, { marketplace, withValues: true })
         if (cancelado) return
         setDados(atributos)
+        setCarregando(false)
 
         if (productId) {
-          const statusProduto = await fetchProductAttributeStatus(clientId, productId, {
-            categoryId: anymarketCategoryId,
-            marketplaces: [marketplace],
-          })
-          if (cancelado) return
-          setPreenchidos(statusProduto.filled ?? [])
-          setCaveat(statusProduto.caveat ?? null)
-          setValores(
-            Object.fromEntries((statusProduto.filled ?? []).map((item) => [item.name, item.value ?? '']))
-          )
+          setCarregandoValores(true)
+          try {
+            const statusProduto = await fetchProductAttributeStatus(clientId, productId, {
+              categoryId: anymarketCategoryId,
+              marketplaces: [marketplace],
+            })
+            if (cancelado) return
+            setPreenchidos(statusProduto.filled ?? [])
+            setCaveat(statusProduto.caveat ?? null)
+            setValores(
+              Object.fromEntries((statusProduto.filled ?? []).map((item) => [item.name, item.value ?? '']))
+            )
+          } catch (errProd) {
+            console.warn('[AttributesStep] Não foi possível carregar atributos do produto:', errProd)
+          } finally {
+            if (!cancelado) setCarregandoValores(false)
+          }
         }
       } catch (err) {
-        if (!cancelado) setErro(err.response?.data?.error ?? err.message)
-      } finally {
-        if (!cancelado) setCarregando(false)
+        if (!cancelado) {
+          setErro(err.response?.data?.error ?? err.message)
+          setCarregando(false)
+        }
       }
     }
 
@@ -563,6 +589,71 @@ function AttributesStep({ clientId, anymarketCategoryId, marketplace, productId,
       cancelado = true
     }
   }, [clientId, anymarketCategoryId, marketplace, productId])
+
+  const obrigatorios = (dados?.attributes ?? []).filter((a) => Boolean(a.required))
+  const opcionais = (dados?.attributes ?? []).filter((a) => !a.required)
+  const faltando = obrigatorios.filter((a) => !String(valores[a.name] ?? '').trim())
+
+  const gerarComIA = async (scope = 'all') => {
+    setMenuIAAberto(false)
+    if (!dados?.attributes?.length) return
+
+    let alvoAtributos = dados.attributes
+    if (scope === 'required') {
+      alvoAtributos = obrigatorios
+      if (!alvoAtributos.length) {
+        addToast('info', 'Esta categoria não possui atributos obrigatórios para este canal.')
+        return
+      }
+    } else if (scope === 'optional') {
+      alvoAtributos = opcionais
+      if (!alvoAtributos.length) {
+        addToast('info', 'Esta categoria não possui atributos opcionais para este canal.')
+        return
+      }
+    }
+
+    setGerandoEscopo(scope)
+    try {
+      const res = await extractAttributesWithAI(clientId, {
+        productId,
+        title: product?.newTitle || product?.title || null,
+        description: product?.newDescription || product?.description || null,
+        characteristics: product?.characteristics || null,
+        attributes: alvoAtributos,
+        scope,
+      })
+
+      const extracted = res.extracted ?? []
+      if (!extracted.length) {
+        addToast('info', 'A IA não identificou informações para esses atributos no texto do produto.')
+        return
+      }
+
+      const novosValores = {}
+      extracted.forEach((item) => {
+        novosValores[item.name] = item.value
+      })
+
+      setValores((prev) => ({
+        ...prev,
+        ...novosValores,
+      }))
+
+      const rotuloEscopo =
+        scope === 'required'
+          ? 'obrigatório(s)'
+          : scope === 'optional'
+          ? 'opcional(is)'
+          : 'atributo(s) (obrigatórios e opcionais)'
+
+      addToast('success', `✨ IA preencheu ${extracted.length} ${rotuloEscopo}!`)
+    } catch (err) {
+      addToast('error', err.response?.data?.error ?? err.message ?? 'Falha ao gerar atributos com IA.')
+    } finally {
+      setGerandoEscopo(null)
+    }
+  }
 
   const salvar = async () => {
     const originais = new Map(preenchidos.map((item) => [item.name, item.value ?? '']))
@@ -590,56 +681,152 @@ function AttributesStep({ clientId, anymarketCategoryId, marketplace, productId,
     }
   }
 
-  const obrigatorios = (dados?.attributes ?? []).filter((a) => a.required)
-  const opcionais = (dados?.attributes ?? []).filter((a) => !a.required)
-  const faltando = obrigatorios.filter((a) => !String(valores[a.name] ?? '').trim())
-
   return (
-    <div className="mt-3 rounded-lg px-3 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle, #2a2a35)' }}>
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-xs font-bold text-slate-200">Atributos em {rotuloCanal(marketplace)}</p>
-        <button onClick={onClose} className="text-[11px] text-slate-400 hover:text-white">
-          fechar
-        </button>
+    <div className="mt-3 rounded-lg px-4 py-3.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle, #2a2a35)' }}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-slate-800">
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-bold text-slate-200">Atributos em {rotuloCanal(marketplace)}</p>
+          {dados?.attributes && (
+            <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full">
+              {dados.attributes.length} {dados.attributes.length === 1 ? 'atributo' : 'atributos'}
+            </span>
+          )}
+          {carregandoValores && (
+            <span className="text-[10px] text-indigo-400 animate-pulse">
+              (carregando valores do produto…)
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {dados?.attributes?.length > 0 && (
+            <div className="relative">
+              <div className="inline-flex rounded-md shadow-sm">
+                <button
+                  onClick={() => gerarComIA('required')}
+                  disabled={Boolean(gerandoEscopo) || carregando}
+                  title="Preencher com IA os atributos obrigatórios com base no título e descrição"
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-l-md text-[11px] font-bold text-white border border-r-0 border-purple-500/40 hover:border-purple-400 disabled:opacity-50 transition-all"
+                  style={{ background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)' }}
+                >
+                  <span>{gerandoEscopo ? '⟳' : '✨'}</span>
+                  <span>
+                    {gerandoEscopo === 'required'
+                      ? 'Preenchendo Obrigatórios…'
+                      : gerandoEscopo === 'all'
+                      ? 'Preenchendo Todos…'
+                      : gerandoEscopo === 'optional'
+                      ? 'Preenchendo Opcionais…'
+                      : 'Preencher Obrigatórios com IA'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setMenuIAAberto((prev) => !prev)}
+                  disabled={Boolean(gerandoEscopo) || carregando}
+                  title="Outras opções de preenchimento com IA"
+                  className="px-2 py-1 rounded-r-md text-[10px] font-bold text-white border border-purple-500/40 hover:border-purple-300 disabled:opacity-50 transition-all border-l border-white/20"
+                  style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #9333ea 100%)' }}
+                >
+                  ▼
+                </button>
+              </div>
+
+              {/* Menu Dropdown de Opções de IA */}
+              {menuIAAberto && (
+                <div
+                  className="absolute right-0 mt-1 w-64 rounded-lg shadow-xl py-1 z-30 border"
+                  style={{ background: '#181824', borderColor: '#3b3b4f' }}
+                >
+                  <button
+                    onClick={() => gerarComIA('required')}
+                    className="w-full text-left px-3 py-2 text-[11px] text-amber-300 hover:bg-white/5 flex items-center justify-between"
+                  >
+                    <span>⭐ Só Obrigatórios</span>
+                    <span className="text-[10px] text-slate-500">({obrigatorios.length})</span>
+                  </button>
+                  <button
+                    onClick={() => gerarComIA('all')}
+                    className="w-full text-left px-3 py-2 text-[11px] text-indigo-300 hover:bg-white/5 flex items-center justify-between border-t border-slate-800"
+                  >
+                    <span>✨ Todos (Obrigatórios + Opcionais)</span>
+                    <span className="text-[10px] text-slate-500">({dados.attributes.length})</span>
+                  </button>
+                  <button
+                    onClick={() => gerarComIA('optional')}
+                    className="w-full text-left px-3 py-2 text-[11px] text-slate-300 hover:bg-white/5 flex items-center justify-between border-t border-slate-800"
+                  >
+                    <span>💡 Só Opcionais & Recomendados</span>
+                    <span className="text-[10px] text-slate-500">({opcionais.length})</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <button onClick={onClose} className="text-[11px] text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-white/5">
+            ✕ fechar
+          </button>
+        </div>
       </div>
 
-      {carregando && <p className="text-[11px] text-slate-400">Lendo os atributos da categoria…</p>}
-      {erro && <p className="text-[11px] text-rose-400">{erro}</p>}
+      {carregando && (
+        <div className="py-4 text-center">
+          <div className="inline-block animate-spin text-indigo-400 text-lg mb-1">⟳</div>
+          <p className="text-[11px] text-slate-400">Lendo os atributos da categoria…</p>
+        </div>
+      )}
+      {erro && <p className="text-[11px] text-rose-400 py-2">{erro}</p>}
 
       {!carregando && !erro && !dados?.attributes?.length && (
-        <p className="text-[11px] text-slate-400">
+        <p className="text-[11px] text-slate-400 py-2">
           Esta categoria não tem atributos cadastrados para este canal
           {dados?.unlinkedGroups ? ` (${dados.unlinkedGroups} grupo(s) de características não estão ligados a nenhuma categoria)` : ''}.
         </p>
       )}
 
       {!carregando && !erro && dados?.attributes?.length > 0 && (
-        <>
+        <div className="space-y-4">
           {productId && faltando.length > 0 && (
-            <p className="text-[11px] text-amber-400 mb-2">
-              ⚠ {faltando.length} obrigatório(s) sem valor: {faltando.map((a) => a.name).join(', ')}
-            </p>
+            <div className="rounded-md px-3 py-2 text-[11px] bg-amber-500/10 border border-amber-500/30 text-amber-300">
+              <span className="font-bold">⚠ {faltando.length} atributo(s) obrigatório(s) sem preenchimento:</span>
+              <div className="mt-1 text-slate-300">
+                {faltando.map((a) => a.name).join(', ')}
+              </div>
+            </div>
           )}
 
-          <div className="space-y-1.5">
-            {obrigatorios.map((attr) => (
-              <CampoAtributo
-                key={`${attr.id}-${attr.name}`}
-                attr={attr}
-                valor={valores[attr.name] ?? ''}
-                editavel={Boolean(productId)}
-                onChange={(v) => setValores((prev) => ({ ...prev, [attr.name]: v }))}
-              />
-            ))}
-          </div>
+          {/* ── SEÇÃO: OBRIGATÓRIOS ──────────────────────────────── */}
+          <div className="rounded-lg p-3" style={{ background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.2)' }}>
+            <div className="flex items-center justify-between mb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span className="text-xs font-bold text-amber-300">
+                  Obrigatórios ({obrigatorios.length})
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {obrigatorios.length > 0 && (
+                  <button
+                    onClick={() => gerarComIA('required')}
+                    disabled={Boolean(gerandoEscopo)}
+                    title="Preencher com IA apenas os atributos obrigatórios"
+                    className="px-2 py-0.5 rounded text-[10px] font-bold border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-50 transition-colors"
+                  >
+                    ✨ IA Obrigatórios
+                  </button>
+                )}
+                <span className="text-[10px] text-amber-400/80 font-medium">Exigidos para publicação</span>
+              </div>
+            </div>
 
-          {opcionais.length > 0 && (
-            <details className="mt-2">
-              <summary className="cursor-pointer text-[11px] text-slate-400">Opcionais ({opcionais.length})</summary>
-              <div className="mt-1.5 space-y-1.5">
-                {opcionais.map((attr) => (
+            {obrigatorios.length === 0 ? (
+              <p className="text-[11px] text-slate-400 italic py-1">Nenhum atributo obrigatório para esta categoria neste canal.</p>
+            ) : (
+              <div className="space-y-2">
+                {obrigatorios.map((attr) => (
                   <CampoAtributo
-                    key={`${attr.id}-${attr.name}`}
+                    key={attr.codeInMarketPlace || attr.id || attr.name}
                     attr={attr}
                     valor={valores[attr.name] ?? ''}
                     editavel={Boolean(productId)}
@@ -647,69 +834,143 @@ function AttributesStep({ clientId, anymarketCategoryId, marketplace, productId,
                   />
                 ))}
               </div>
-            </details>
+            )}
+          </div>
+
+          {/* ── SEÇÃO: OPCIONAIS / RECOMENDADOS ────────────────────── */}
+          {opcionais.length > 0 && (
+            <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle, #2a2a35)' }}>
+              <details className="group" open>
+                <summary className="cursor-pointer flex items-center justify-between select-none">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                    <span className="text-xs font-bold text-slate-300">
+                      Opcionais & Recomendados ({opcionais.length})
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        gerarComIA('optional')
+                      }}
+                      disabled={Boolean(gerandoEscopo)}
+                      title="Preencher com IA apenas os atributos opcionais e recomendados"
+                      className="px-2 py-0.5 rounded text-[10px] font-bold border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50 transition-colors"
+                    >
+                      ✨ IA Opcionais
+                    </button>
+                    <span className="text-[10px] text-slate-400 group-open:rotate-180 transition-transform duration-200">
+                      ▼
+                    </span>
+                  </div>
+                </summary>
+                <div className="mt-3 pt-2 border-t border-slate-800/80 space-y-2">
+                  {opcionais.map((attr) => (
+                    <CampoAtributo
+                      key={attr.codeInMarketPlace || attr.id || attr.name}
+                      attr={attr}
+                      valor={valores[attr.name] ?? ''}
+                      editavel={Boolean(productId)}
+                      onChange={(v) => setValores((prev) => ({ ...prev, [attr.name]: v }))}
+                    />
+                  ))}
+                </div>
+              </details>
+            </div>
           )}
 
           {productId && (
-            <div className="flex items-center justify-between gap-2 mt-3">
+            <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800">
               <p className="text-[10px] text-slate-500 leading-tight">{caveat}</p>
               <button
                 onClick={salvar}
                 disabled={salvando}
-                className="shrink-0 px-3 py-1.5 rounded-md text-[11px] font-bold text-white disabled:opacity-60"
+                className="shrink-0 px-3.5 py-1.5 rounded-md text-xs font-bold text-white shadow-sm disabled:opacity-60 transition-colors"
                 style={{ background: '#4f46e5' }}
               >
-                {salvando ? 'gravando…' : 'Gravar atributos no produto'}
+                {salvando ? 'Gravando…' : 'Gravar atributos no produto'}
               </button>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   )
 }
 
-/** Um campo por atributo. LIST vira select quando os valores possíveis vieram. */
+/** Um campo por atributo. Diferencia visualmente obrigatórios e opcionais. */
 function CampoAtributo({ attr, valor, editavel, onChange }) {
   const estiloCampo = {
-    background: 'rgba(0,0,0,0.25)',
+    background: 'rgba(0,0,0,0.3)',
     border: '1px solid var(--border-subtle, #2a2a35)',
     color: '#e2e8f0',
   }
 
-  return (
-    <div className="flex items-center gap-2">
-      <label className="text-[11px] w-40 shrink-0 truncate" style={{ color: attr.required ? '#fbbf24' : '#94a3b8' }}>
-        {attr.required ? '* ' : ''}
-        {attr.name}
-        <span className="text-slate-600"> · {attr.valueType}</span>
-      </label>
+  const isRequired = Boolean(attr.required)
+  const isRecommended = Boolean(attr.recommended)
 
-      {attr.valueType === 'LIST' && attr.allowedValues?.length ? (
-        <select
-          disabled={!editavel}
-          value={valor}
-          onChange={(e) => onChange(e.target.value)}
-          className="flex-1 rounded-md px-2 py-1 text-[11px] disabled:opacity-60"
-          style={estiloCampo}
-        >
-          <option value="">(vazio)</option>
-          {attr.allowedValues.map((opcao) => (
-            <option key={opcao.id ?? opcao.value} value={opcao.value}>
-              {opcao.value}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          disabled={!editavel}
-          value={valor}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={attr.valueType === 'BOOLEAN' ? 'true / false' : attr.valueType === 'NUMBER' ? 'número' : ''}
-          className="flex-1 rounded-md px-2 py-1 text-[11px] disabled:opacity-60"
-          style={estiloCampo}
-        />
-      )}
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 p-1.5 rounded hover:bg-white/[0.02] transition-colors">
+      <div className="w-full sm:w-56 shrink-0 flex items-center gap-1.5">
+        {isRequired ? (
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold border border-amber-500/40 bg-amber-500/15 text-amber-300">
+            OBRIGATÓRIO
+          </span>
+        ) : isRecommended ? (
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold border border-sky-500/40 bg-sky-500/15 text-sky-300">
+            RECOMENDADO
+          </span>
+        ) : (
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-slate-700 bg-slate-800/60 text-slate-400">
+            OPCIONAL
+          </span>
+        )}
+        <label className="text-[11px] font-medium text-slate-300 truncate" title={`${attr.name} (${attr.codeInMarketPlace || ''})`}>
+          {attr.name}
+        </label>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        {attr.valueType === 'LIST' && attr.allowedValues?.length ? (
+          <select
+            disabled={!editavel}
+            value={valor}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full rounded-md px-2.5 py-1.5 text-[11px] disabled:opacity-60 focus:outline-none focus:border-indigo-500"
+            style={estiloCampo}
+          >
+            <option value="">(vazio)</option>
+            {attr.allowedValues.map((opcao) => {
+              const val = typeof opcao === 'object' ? (opcao.value ?? opcao.description ?? opcao.name ?? opcao.id) : opcao
+              const label = typeof opcao === 'object' ? (opcao.description ?? opcao.name ?? opcao.value ?? opcao.id) : opcao
+              return (
+                <option key={typeof opcao === 'object' ? (opcao.id ?? val) : val} value={val}>
+                  {label}
+                </option>
+              )
+            })}
+          </select>
+        ) : (
+          <input
+            disabled={!editavel}
+            value={valor}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={
+              attr.valueType === 'BOOLEAN'
+                ? 'true / false'
+                : attr.valueType === 'NUMBER'
+                ? 'número'
+                : attr.codeInMarketPlace
+                ? `Ex: valor para ${attr.codeInMarketPlace}`
+                : 'digite o valor…'
+            }
+            className="w-full rounded-md px-2.5 py-1.5 text-[11px] disabled:opacity-60 focus:outline-none focus:border-indigo-500 placeholder:text-slate-600"
+            style={estiloCampo}
+          />
+        )}
+      </div>
     </div>
   )
 }

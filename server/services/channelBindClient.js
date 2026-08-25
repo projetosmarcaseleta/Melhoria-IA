@@ -567,12 +567,64 @@ export function normalizeMarketplaceCatalog(payload) {
     }))
     .filter((item) => item.code)
 }
+/**
+ * §2b — Atributos de UMA categoria num canal específico via painel (endpoint direto).
+ *
+ * `GET /rest/api/marketplace_category_attributes/categories/{id}/marketplaces/{mp}/attributes/`
+ *
+ * Descoberto por engenharia reversa em 21/08/2026. Muito mais eficiente que varrer
+ * `/v2/categories/characteristics/groups` da conta inteira:
+ *   - 1 chamada vs. N páginas paginadas
+ *   - Resposta imediata vs. 10+ minutos
+ *   - Atributos já filtrados pelo canal correto
+ *
+ * Usa o token do PAINEL (não o de API). Lança se o token estiver ausente/expirado —
+ * quem chama deve capturar e cair no fallback via `fetchCharacteristicGroups`.
+ *
+ * Campos da resposta:
+ *   - `description`       → nome legível do atributo
+ *   - `codeInMarketPlace` → código do atributo no marketplace (ex: "BRAND")
+ *   - `required`          → obrigatório para publicar?
+ *   - `recommended`       → recomendado pelo marketplace?
+ *   - `requireValueBind`  → precisa de vínculo de valor (de-para de valor)?
+ *   - `valueCount`        → quantos valores possíveis existem
+ *   - `hidden`            → atributo interno, não mostrar ao operador
+ */
+export async function fetchCategoryMarketplaceAttributes(panelToken, anymarketCategoryId, marketplace) {
+  const categoryId = assertCategoryId(anymarketCategoryId)
+  const mp = assertMarketplace(marketplace)
+
+  const payload = await panelRequest({
+    token: panelToken,
+    method: 'GET',
+    path: `/marketplace_category_attributes/categories/${encodeURIComponent(categoryId)}/marketplaces/${encodeURIComponent(mp)}/attributes/`,
+  })
+
+  const items = Array.isArray(payload) ? payload : (payload?.attributes ?? payload?.items ?? [])
+
+  return items
+    .filter((item) => item && !item.hidden)
+    .map((item) => ({
+      id: item.id ?? null,
+      name: String(item.description ?? item.name ?? '').trim(),
+      codeInMarketPlace: String(item.codeInMarketPlace ?? '').trim(),
+      required: Boolean(item.required),
+      recommended: Boolean(item.recommended),
+      requireValueBind: Boolean(item.requireValueBind),
+      valueCount: Number(item.valueCount ?? 0),
+      valueType: item.valueType ? String(item.valueType).toUpperCase() : (item.requireValueBind || Number(item.valueCount) > 0) ? 'LIST' : 'TEXT',
+      allowedValues: Array.isArray(item.values) ? item.values : Array.isArray(item.allowedValues) ? item.allowedValues : null,
+      marketplace: mp,
+    }))
+    .filter((item) => item.name && item.codeInMarketPlace)
+}
+
 
 /**
- * Grupos de características do hub, paginado.
+ * Grupos de características do hub, paginado (fallback quando o token do painel
+ * não está disponível para `fetchCategoryMarketplaceAttributes`).
  *
- * `characteristicItemMarketPlaces[]` traz `required` POR CANAL — a mesma categoria
- * do hub pode ter um atributo obrigatório no Mercado Livre e opcional na Magalu.
+ * Varre TODA a conta — usar só quando necessário.
  */
 export async function fetchCharacteristicGroups(token, { limit, maxPages, onProgress = null } = {}) {
   const { items, pages, truncated } = await paginate(

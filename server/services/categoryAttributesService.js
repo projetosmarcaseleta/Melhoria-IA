@@ -22,8 +22,10 @@
 
 import { db } from './firebaseAdmin.js'
 import { AnymarketApiError, resolveAnymarketToken, fetchProduct } from './anymarketClient.js'
-import { fetchCharacteristicGroups, fetchVariationValues, patchProductCharacteristics, assertMarketplace, assertCategoryId } from './channelBindClient.js'
+import { fetchCategoryMarketplaceAttributes, fetchCharacteristicGroups, fetchVariationValues, patchProductCharacteristics, assertMarketplace, assertCategoryId } from './channelBindClient.js'
+import { resolvePanelToken } from './channelBindService.js'
 import { isTestClient, getMockCharacteristicGroups } from './mockStorage.js'
+import { generateStructured } from './llmService.js'
 
 const ATTRS_CACHE = 'category_attributes_cache'
 const PRODUCT_VALUES = 'product_attribute_values'
@@ -284,6 +286,13 @@ async function loadAccountAttributes(clientId, { refresh = false } = {}) {
 /**
  * Atributos de UMA categoria, opcionalmente já filtrados por canal.
  *
+ * Caminho primário: endpoint direto do painel
+ *   `GET /rest/api/marketplace_category_attributes/categories/{id}/marketplaces/{mp}/attributes/`
+ *   → 1 chamada, resposta imediata, atributos já filtrados pelo canal.
+ *
+ * Caminho de fallback (token do painel ausente/expirado): varredura da conta inteira
+ *   via `loadAccountAttributes` — lento, mas sempre disponível com o gumgaToken.
+ *
  * `withValues` busca os valores possíveis dos atributos LIST — chamada extra por
  * atributo, então é opt-in: a tela pede só quando vai realmente renderizar o select.
  */
@@ -295,6 +304,32 @@ export async function getCategoryAttributes(
   const categoryId = assertCategoryId(anymarketCategoryId)
   const mp = marketplace ? assertMarketplace(marketplace) : null
 
+  // ── Caminho primário: endpoint direto do painel ────────────────────────────
+  if (mp && !isTestClient(clientId)) {
+    try {
+      const panelToken = await resolvePanelToken(clientId)
+      if (panelToken) {
+        const attrs = await fetchCategoryMarketplaceAttributes(panelToken, categoryId, mp)
+        return {
+          anymarketCategoryId: categoryId,
+          marketplace: mp,
+          attributes: attrs,
+          marketplaces: [mp],
+          hasAny: attrs.length > 0,
+          syncedAt: new Date().toISOString(),
+          source: 'panel_direct',
+          truncated: false,
+          unlinkedGroups: 0,
+          degraded: false,
+        }
+      }
+    } catch (err) {
+      // Token expirado ou painel indisponível → cai no fallback.
+      console.warn(`[CategoryAttributes] Endpoint direto do painel indisponível (${err.code ?? err.message}) — usando fallback de varredura.`)
+    }
+  }
+
+  // ── Fallback: varredura da conta inteira ───────────────────────────────────
   const conta = await loadAccountAttributes(clientId, { refresh })
   const byMarketplace = conta.byCategory[categoryId] ?? {}
 
@@ -363,26 +398,54 @@ export async function validateProductAttributes(
   const categoryId = assertCategoryId(anymarketCategoryId ?? product?.category?.id)
   const filled = normalizeProductCharacteristics(product)
 
-  const conta = await loadAccountAttributes(clientId, { refresh })
-  const byMarketplace = conta.byCategory[categoryId] ?? {}
+  let byChannel = []
+  let syncedAt = new Date().toISOString()
 
   const canais = marketplaces?.length
     ? marketplaces.map((mp) => assertMarketplace(mp))
-    : Object.keys(byMarketplace).filter((key) => key !== ALL_CHANNELS).sort()
+    : []
 
-  // Sem detalhamento por canal, ainda há o que validar: os obrigatórios do hub.
-  const alvos = canais.length ? canais : [ALL_CHANNELS]
-
-  const byChannel = alvos.map((marketplace) => {
-    const attributes = attributesForMarketplace(byMarketplace, marketplace)
-    const missing = missingRequiredAttributes(attributes, filled)
-    return {
-      marketplace: marketplace === ALL_CHANNELS ? null : marketplace,
-      requiredCount: attributes.filter((attr) => attr.required).length,
-      missing,
-      ok: missing.length === 0,
-    }
-  })
+  if (canais.length > 0) {
+    byChannel = await Promise.all(
+      canais.map(async (marketplace) => {
+        try {
+          const res = await getCategoryAttributes(clientId, categoryId, { marketplace, refresh })
+          const attributes = res.attributes ?? []
+          const missing = missingRequiredAttributes(attributes, filled)
+          return {
+            marketplace,
+            requiredCount: attributes.filter((attr) => attr.required).length,
+            missing,
+            ok: missing.length === 0,
+          }
+        } catch (err) {
+          console.warn(`[CategoryAttributes] Falha ao validar canal ${marketplace}: ${err.message}`)
+          return {
+            marketplace,
+            requiredCount: 0,
+            missing: [],
+            ok: true,
+          }
+        }
+      })
+    )
+  } else {
+    const conta = await loadAccountAttributes(clientId, { refresh })
+    syncedAt = conta.syncedAt
+    const byMarketplace = conta.byCategory[categoryId] ?? {}
+    const alvos = Object.keys(byMarketplace).filter((key) => key !== ALL_CHANNELS).sort()
+    const list = alvos.length ? alvos : [ALL_CHANNELS]
+    byChannel = list.map((marketplace) => {
+      const attributes = attributesForMarketplace(byMarketplace, marketplace)
+      const missing = missingRequiredAttributes(attributes, filled)
+      return {
+        marketplace: marketplace === ALL_CHANNELS ? null : marketplace,
+        requiredCount: attributes.filter((attr) => attr.required).length,
+        missing,
+        ok: missing.length === 0,
+      }
+    })
+  }
 
   return {
     productId: String(productId),
@@ -390,7 +453,7 @@ export async function validateProductAttributes(
     filled,
     byChannel,
     ok: byChannel.every((channel) => channel.ok),
-    syncedAt: conta.syncedAt,
+    syncedAt,
     // Aviso explícito do limite da API: passar por aqui não garante publicação.
     caveat:
       'Só a obrigatoriedade estática é verificável pela API. Regra condicional (atributo exigido só em certas combinações) aparece apenas como erro de transmissão.',
@@ -440,6 +503,129 @@ export async function saveProductAttributes(clientId, { productId, updates, dryR
   }
 
   return { productId: String(productId), characteristics, dryRun: Boolean(result?.dryRun) }
+}
+
+/**
+ * Preenche e sugere valores para os atributos da categoria usando IA (LLM).
+ * Baseia-se no título, descrição e características do produto.
+ */
+export async function extractProductAttributesWithAI(
+  clientId,
+  {
+    productId = null,
+    title = null,
+    description = null,
+    characteristics = null,
+    attributes = [],
+    scope = 'all',
+  } = {}
+) {
+  let targetAttributes = attributes
+  if (scope === 'required') {
+    targetAttributes = attributes.filter((a) => Boolean(a.required))
+  } else if (scope === 'optional') {
+    targetAttributes = attributes.filter((a) => !a.required)
+  }
+
+  if (!Array.isArray(targetAttributes) || !targetAttributes.length) {
+    return { extracted: [] }
+  }
+
+  let prodTitle = title
+  let prodDescription = description
+  let prodCharacteristics = characteristics
+
+  // Se título ou descrição não foram fornecidos diretamente, busca do produto no AnyMarket
+  if ((!prodTitle || !prodDescription) && productId && !isTestClient(clientId)) {
+    try {
+      const token = await resolveAnymarketToken(clientId)
+      const prod = await fetchProduct(token, productId)
+      prodTitle ||= prod?.title ?? ''
+      prodDescription ||= prod?.description ?? ''
+      prodCharacteristics ||= prod?.characteristics ?? []
+    } catch (err) {
+      console.warn(`[CategoryAttributes] Não foi possível buscar dados adicionais do produto ${productId}: ${err.message}`)
+    }
+  }
+
+  // Prepara especificação enxuta dos atributos para orientar o LLM
+  const attributesSpec = targetAttributes.map((attr) => ({
+    name: attr.name,
+    codeInMarketPlace: attr.codeInMarketPlace || undefined,
+    required: Boolean(attr.required),
+    valueType: attr.valueType || 'TEXT',
+    allowedValues: Array.isArray(attr.allowedValues)
+      ? attr.allowedValues
+          .map((v) => (typeof v === 'object' ? (v.value ?? v.name ?? v.description ?? v.id) : v))
+          .filter(Boolean)
+      : undefined,
+  }))
+
+  const systemPrompt = `Você é um especialista em e-commerce, catálogo técnico e marketplaces (ex: Mercado Livre, Shopee, Magalu).
+Sua missão é analisar os dados do produto (título, descrição e características brutas) e extrair/inferir os valores correspondentes para a lista de atributos da categoria.
+
+DIRETRIZES FUNDAMENTAIS:
+1. Analise o TÍTULO, DESCRIÇÃO e CARACTERÍSTICAS fornecidos.
+2. Para cada atributo da lista:
+   - Se houver 'allowedValues', você DEVE escolher EXATAMENTE uma das opções da lista de allowedValues. Não invente opções novas.
+   - Se 'valueType' for 'BOOLEAN', retorne "true" ou "false" (ou "Sim" / "Não" se fizer parte de allowedValues).
+   - Se 'valueType' for 'NUMBER', retorne apenas o número (ou número com unidade se requisitado).
+   - Para texto livre ('TEXT'), forneça a informação de forma concisa e direta.
+3. Se a informação NÃO estiver presente e NÃO puder ser deduzida com alta certeza a partir do texto ou padrão do produto, NÃO INVENTE: omita o atributo da lista ou deixe o valor vazio.
+4. Dê atenção especial e priorize os atributos OBRIGATÓRIOS (required: true).`
+
+  const userMessage = `DADOS DO PRODUTO:
+Título: ${prodTitle || '(não informado)'}
+Descrição: ${prodDescription || '(não informada)'}
+Características Brutas: ${typeof prodCharacteristics === 'string' ? prodCharacteristics : JSON.stringify(prodCharacteristics || [])}
+
+ATRIBUTOS A SEREM PREENCHIDOS:
+${JSON.stringify(attributesSpec, null, 2)}`
+
+  const jsonSchema = {
+    name: 'extracted_attributes',
+    schema: {
+      type: 'object',
+      properties: {
+        extracted: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              value: { type: 'string' },
+            },
+            required: ['name', 'value'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['extracted'],
+      additionalProperties: false,
+    },
+  }
+
+  try {
+    const result = await generateStructured({
+      systemPrompt,
+      userMessage,
+      jsonSchema,
+      model: 'gpt-4o-mini',
+      temperature: 0.1,
+    })
+
+    const extracted = (result?.extracted ?? []).filter(
+      (item) => item?.name && String(item?.value ?? '').trim() !== ''
+    )
+
+    return { extracted }
+  } catch (err) {
+    console.error('[CategoryAttributes] Erro ao extrair atributos com IA:', err)
+    throw new CategoryAttributesError(`Falha ao preencher atributos com IA: ${err.message}`, {
+      status: 500,
+      code: 'ai_extraction_failed',
+    })
+  }
 }
 
 /** Repassado às rotas: erro da API do AnyMarket não vira 500 genérico. */

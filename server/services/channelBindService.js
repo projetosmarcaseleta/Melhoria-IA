@@ -289,13 +289,25 @@ export async function getBindingStatus(clientId, anymarketCategoryId, { marketpl
   let hubUnavailable = false
   let hubError = null
 
+  let categoryNotFound = false
+
   try {
     ;({ bindings } = await d.fetchCategoryBindings(panelToken, categoryId))
   } catch (err) {
-    if (!isPanelUnavailable(err)) throw err
+    // Categoria deletada do AnyMarket: hub devolve HTTP 500 "não existe".
+    // Tratar como estado degradado (mesma lógica do painel indisponível) em vez de
+    // propagar 500 para a UI — o operador vê o espelho local e sabe que a categoria
+    // já não existe, sem tela de erro.
+    const isNotFound =
+      err instanceof AnymarketApiError &&
+      err.status === 500 &&
+      (err.data?.details ?? err.data?.message ?? '').toLowerCase().includes('não existe')
+
+    if (!isPanelUnavailable(err) && !isNotFound) throw err
 
     hubUnavailable = true
-    hubError = { code: err.code, message: err.message }
+    if (isNotFound) categoryNotFound = true
+    hubError = { code: isNotFound ? 'category_not_found_in_hub' : err.code, message: err.message }
 
     const espelho = await getMirroredBindings(clientId, categoryId)
     bindings = espelho.bindings.map((b) => ({
@@ -341,6 +353,7 @@ export async function getBindingStatus(clientId, anymarketCategoryId, { marketpl
     // "resolva no painel do AnyMarket".
     hubUnavailable,
     hubError,
+    categoryNotFound,
     canBindHere: !hubUnavailable,
     panelUrl: panelCategoryScreenUrl(),
   }

@@ -14,6 +14,7 @@ import {
   getCategoryAttributes,
   validateProductAttributes,
   saveProductAttributes,
+  extractProductAttributesWithAI,
 } from '../services/categoryAttributesService.js'
 
 const router = Router()
@@ -36,6 +37,30 @@ const parseList = (raw) =>
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+
+/**
+ * POST /api/category-attributes/ai-extract
+ * Body: { clientId, productId, title, description, characteristics, attributes }
+ */
+router.post('/ai-extract', async (req, res, next) => {
+  try {
+    const { clientId, productId, title, description, characteristics, attributes, scope } = req.body ?? {}
+    if (!clientId) {
+      return res.status(400).json({ error: 'clientId é obrigatório.', code: 'missing_client' })
+    }
+    const result = await extractProductAttributesWithAI(clientId, {
+      productId,
+      title,
+      description,
+      characteristics,
+      attributes,
+      scope,
+    })
+    return res.json(result)
+  } catch (err) {
+    return handleError(err, res, next)
+  }
+})
 
 /**
  * GET /api/category-attributes/product/:clientId/:productId

@@ -315,6 +315,7 @@ export default function CategoryModal({ product, onClose, onApplied }) {
                     anymarketCategoryId={String(result.leafId)}
                     categoryPath={proposal?.proposedPath?.join(' › ')}
                     productId={product.id}
+                    product={product}
                   />
                 </div>
               )}
@@ -327,6 +328,7 @@ export default function CategoryModal({ product, onClose, onApplied }) {
               anymarketCategoryId={String(channelTargetCategory?.id ?? proposal?.leafCategoryId ?? proposal?.currentCategory?.id)}
               categoryPath={channelTargetCategory?.path ?? proposal?.currentCategory?.fullPath ?? proposal?.proposedPath?.join(' › ')}
               productId={product.id}
+              product={product}
             />
           )}
         </div>
@@ -365,9 +367,34 @@ export default function CategoryModal({ product, onClose, onApplied }) {
               </>
             ) : (
               <>
-                <button onClick={handleReject} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-rose-400">
-                  Recusar sugestão
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleReject} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-rose-400">
+                    Recusar sugestão
+                  </button>
+                  {proposal.currentCategory?.id && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        // Registra rejeição para o CRIA aprender, mas não fecha o modal
+                        try {
+                          if (proposal?.id) {
+                            const { rejectCategory } = await import('../services/categoryService')
+                            await rejectCategory(activeClient.id, proposal.id, 'operador optou por manter categoria atual')
+                          }
+                        } catch { /* registro de aprendizado — falha não bloqueia */ }
+                        setChannelTargetCategory({
+                          id: proposal.currentCategory.id,
+                          path: proposal.currentCategory.fullPath ?? proposal.currentCategory.name,
+                        })
+                        setPhase('channels')
+                      }}
+                      className="px-3 py-2 rounded-lg text-xs font-bold border border-emerald-500/40 bg-emerald-950/40 text-emerald-300 hover:border-emerald-400 hover:text-white transition-all flex items-center gap-1"
+                      title="Manter o produto na categoria atual e verificar/corrigir o de-para de canal"
+                    >
+                      📌 Manter na categoria atual
+                    </button>
+                  )}
+                </div>
 
                 <div className="flex items-center gap-2">
                   {(proposal.currentCategory?.id || proposal.leafCategoryId || proposal.reusedPrefix?.[proposal.reusedPrefix.length - 1]?.anymarketId) && (
@@ -387,7 +414,7 @@ export default function CategoryModal({ product, onClose, onApplied }) {
                         setPhase('channels')
                       }}
                       className="px-3 py-2 rounded-lg text-xs font-bold border border-indigo-500/40 bg-indigo-950/40 text-indigo-300 hover:border-indigo-400 hover:text-white transition-all flex items-center gap-1"
-                      title="Verificar de-para por canal/marketplace e atributos"
+                      title="Verificar de-para por canal/marketplace e atributos da categoria sugerida"
                     >
                       <span>🔗 Canais e de-para</span>
                     </button>
@@ -409,6 +436,7 @@ export default function CategoryModal({ product, onClose, onApplied }) {
                 </div>
               </>
             )}
+
           </div>
         )}
 
@@ -480,41 +508,13 @@ function ProposalReview({ proposal, confirmNewRoot, working, onUseExisting, onIn
             {proposal.currentCategory?.id && <span className="text-slate-500 text-xs"> · #{proposal.currentCategory.id}</span>}
           </p>
         </div>
-        {proposal.currentCategory?.id && (
-          <button
-            type="button"
-            onClick={() =>
-              onInspectChannels?.({
-                id: proposal.currentCategory.id,
-                path: proposal.currentCategory.fullPath ?? proposal.currentCategory.name,
-              })
-            }
-            className="shrink-0 px-2.5 py-1.5 rounded-md text-[11px] font-bold border border-slate-700 bg-slate-800 text-indigo-300 hover:text-white hover:border-indigo-500 hover:bg-indigo-950/40 transition-all flex items-center gap-1"
-            title="Verificar de-para e atributos desta categoria atual"
-          >
-            <span>🔍 Ver canais e atributos</span>
-          </button>
-        )}
+
       </div>
 
       <div className="mb-4">
         <div className="flex items-center justify-between gap-2 mb-2">
           <p className="text-[11px] uppercase tracking-wide text-slate-500">Categoria sugerida</p>
-          {(proposal.leafCategoryId || proposal.reusedPrefix?.[proposal.reusedPrefix.length - 1]?.anymarketId) && (
-            <button
-              type="button"
-              onClick={() =>
-                onInspectChannels?.({
-                  id: proposal.leafCategoryId ?? proposal.reusedPrefix[proposal.reusedPrefix.length - 1].anymarketId,
-                  path: proposal.proposedPath?.join(' › '),
-                })
-              }
-              className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold border border-indigo-500/40 bg-indigo-950/40 text-indigo-300 hover:text-white hover:border-indigo-400 hover:bg-indigo-900/50 transition-all flex items-center gap-1"
-              title="Verificar de-para por canal/marketplace para esta categoria sugerida"
-            >
-              <span>🔗 Ver de-para dos marketplaces</span>
-            </button>
-          )}
+
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {níveis.map((nível, i) => (

@@ -106,6 +106,16 @@ export async function saveProductAttributes(clientId, productId, updates) {
   return data
 }
 
+/** Preenche atributos com IA com base no título, descrição e características. */
+export async function extractAttributesWithAI(clientId, { productId, title, description, characteristics, attributes, scope = 'all' }) {
+  const { data } = await apiClient.post(
+    '/api/category-attributes/ai-extract',
+    { clientId, productId, title, description, characteristics, attributes, scope },
+    { timeout: 120_000 }
+  )
+  return data
+}
+
 /**
  * Pede ao CRIA que RESOLVA o de-para de todos os canais pendentes.
  *

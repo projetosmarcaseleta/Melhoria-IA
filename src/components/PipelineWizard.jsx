@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import PipelineChannelsStage from './PipelineChannelsStage'
+import PipelineAttributesStage from './PipelineAttributesStage'
 import Icon from './icons/Icon'
 import { Button, IconButton } from './ui/primitives'
 
@@ -51,12 +52,12 @@ const STAGES = [
 const PLACEHOLDER_POR_ETAPA = {
   content: 'Use a aba Revisão para gerar e aprovar título/descrição destes produtos — essa etapa ainda usa o fluxo de hoje.',
   category: 'Abra um produto na aba Revisão e use o botão "Categoria" para sugerir e aprovar — essa etapa ainda usa o fluxo de hoje.',
-  attributes: 'Abra o botão "Categoria" do produto → seção "Atributos" de cada canal vinculado — essa etapa ainda usa o fluxo de hoje.',
 }
 
-export default function PipelineWizard({ clientId, products, onClose }) {
-  const [fase, setFase] = useState('checklist') // checklist | executando
-  const [runStages, setRunStages] = useState({ content: true, category: true, channels: true, attributes: true })
+export default function PipelineWizard({ clientId, products, onClose, initialStages = null }) {
+  const defaultStages = { content: true, category: true, channels: true, attributes: true }
+  const [fase, setFase] = useState(initialStages ? 'executando' : 'checklist')
+  const [runStages, setRunStages] = useState(initialStages ?? defaultStages)
   const [stepIndex, setStepIndex] = useState(0)
 
   const etapasAtivas = useMemo(() => STAGES.filter((s) => runStages[s.key]), [runStages])
@@ -68,6 +69,14 @@ export default function PipelineWizard({ clientId, products, onClose }) {
     setStepIndex(0)
     setFase('executando')
   }
+
+  // Quando initialStages é fornecido, começa já na fase executando no step correto
+  const stepAtivo = useMemo(() => {
+    if (!initialStages) return stepIndex
+    const idx = etapasAtivas.findIndex((s) => initialStages[s.key])
+    return idx >= 0 ? idx : 0
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const avancar = () => {
     if (stepIndex >= etapasAtivas.length - 1) {
@@ -158,6 +167,8 @@ export default function PipelineWizard({ clientId, products, onClose }) {
 
               {etapaAtual.key === 'channels' ? (
                 <PipelineChannelsStage clientId={clientId} products={products} />
+              ) : etapaAtual.key === 'attributes' ? (
+                <PipelineAttributesStage clientId={clientId} products={products} />
               ) : (
                 <div className="rounded-xl px-4 py-10 text-center border border-dashed border-slate-700 bg-white/[0.02] space-y-2">
                   <Icon name="info" size={20} className="mx-auto text-slate-500" />

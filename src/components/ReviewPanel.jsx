@@ -76,6 +76,7 @@ export default function ReviewPanel() {
   const [categoryProduct, setCategoryProduct] = useState(null)
   const [categoryEnabled, setCategoryEnabled] = useState(false)
   const [pipelineOpen, setPipelineOpen] = useState(false)
+  const [attributesOpen, setAttributesOpen] = useState(false)
 
   const [feedbackState, setFeedbackState] = useState({})
 
@@ -713,6 +714,17 @@ export default function ReviewPanel() {
               Processar em etapas
             </Button>
 
+            <Button
+              variant="outline"
+              icon="fileText"
+              onClick={() => setAttributesOpen(true)}
+              disabled={!selected.length}
+              count={selected.length}
+              title="Preencher atributos de canal com IA para os produtos selecionados"
+            >
+              Atributos com IA
+            </Button>
+
             <div className="h-6 w-px bg-slate-700 hidden sm:block" />
 
             <Button icon="check" onClick={handleApproveOnly} disabled={!selected.length} count={selected.length}>
@@ -900,6 +912,15 @@ export default function ReviewPanel() {
           clientId={activeClient?.id}
           products={reviewable.filter((p) => selected.includes(p.id))}
           onClose={() => setPipelineOpen(false)}
+        />
+      )}
+
+      {attributesOpen && (
+        <PipelineWizard
+          clientId={activeClient?.id}
+          products={reviewable.filter((p) => selected.includes(p._key || p.id))}
+          onClose={() => setAttributesOpen(false)}
+          initialStages={{ content: false, category: false, channels: false, attributes: true }}
         />
       )}
     </div>
