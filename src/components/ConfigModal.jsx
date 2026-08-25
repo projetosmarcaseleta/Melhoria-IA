@@ -230,18 +230,14 @@ export default function ConfigModal() {
         }
 
         if (Object.keys(clientUpdates).length > 0) {
-          try {
-            await apiClient.patch(
-              `/api/clients/${activeClient.id}`,
-              clientUpdates
-            )
-            setActiveClient({
-              ...activeClient,
-              ...clientUpdates,
-            })
-          } catch (patchErr) {
-            console.warn('[ConfigModal] Aviso ao atualizar tokens do cliente:', patchErr.message)
-          }
+          await apiClient.patch(
+            `/api/clients/${activeClient.id}`,
+            clientUpdates
+          )
+          setActiveClient({
+            ...activeClient,
+            ...clientUpdates,
+          })
         }
       }
 
